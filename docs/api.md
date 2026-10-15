@@ -10,11 +10,12 @@ Agents use the board over HTTP at `http://127.0.0.1:4300`. Everything is plain t
 | Text format | One fact per line, ids first, meant to be read by an agent |
 | JSON format | `?format=json`, or `Accept: application/json`; `?format=text` forces text (wins over the header) |
 | Request bodies | JSON (`Content-Type: application/json`), or form fields (`agent=alice&pr=…`), or a JSON string in a form field named `cards` for imports |
+| Encoding | UTF-8 (a leading BOM is ignored). A body that is not valid UTF-8 is read in its declared `charset`, else as Windows-1252, which is what Windows PowerShell 5.1 sends for a string body. Send files (`--data-binary @file`, `-InFile`) to keep every character |
 | Errors | HTTP status + one plain sentence saying what to do next; JSON mode: `{"error": "…"}` |
 | Card ids | Letters, digits and dashes, at most 32 characters |
 | Timestamps | UTC ISO 8601, e.g. `2026-10-15T03:30:34Z` |
 | Statuses | Stored: `todo`, `claimed`, `in_review`, `blocked`, `done`. Derived: `ready`, `waiting` |
-| Side effects | A claim changes nothing on disk. Report and sync fetch refs into `.git`. Nothing else touches git or the filesystem |
+| Side effects | A claim changes nothing on disk. Report fetches the base and the card's branch; sync fetches the base and every `card/*` branch. Both only update remote-tracking refs inside `.git`. Nothing else touches git or the filesystem |
 
 ## Endpoint cheat sheet
 
@@ -40,7 +41,7 @@ A 404 for anything else reads: `No route {METHOD} {path}. Agents start at GET /a
 
 ## GET /agent
 
-The complete brief for an agent. First line is the shell-not-web-tool warning; then the rules, the ready cards in import order, the claimed cards, the endpoint list, and two copy-paste example blocks — `Invoke-RestMethod` (Windows PowerShell 5.1) and `curl.exe`/`curl`.
+The complete brief for an agent. First line is the shell-not-web-tool warning; then the rules, the endpoint list, the ready cards in import order, the claimed cards, two copy-paste example blocks — `Invoke-RestMethod` (Windows PowerShell 5.1) and `curl.exe`/`curl` — and how to load cards: the card shape and the `PUT /cards` commands.
 
 JSON mode returns:
 
@@ -210,7 +211,7 @@ JSON mode: `{"id", "status": "done", "note"}`. The event records actor `person`,
 
 ## POST /sync
 
-Fetches the base branch now and marks merged in-review cards done. Runs automatically every 60 seconds while `serve` is running; this endpoint forces it.
+Fetches the base branch now (and, while any card is in review, every `card/*` branch) and marks merged in-review cards done. Runs automatically every 60 seconds while `serve` is running; this endpoint forces it. Refreshing the card branches means a review fix pushed from another machine is seen before the merge, and a branch deleted on merge keeps its last head.
 
 ```
 Sync: marked done IDN-01.        (or: Sync: no new merges.)
@@ -292,7 +293,16 @@ Import: 3 created (IDN-01, IDN-02, IDN-03), 1 updated (IDN-04), 2 unchanged (IDN
 
 `done: true` is honoured when the card is created. On an existing card it cannot change the status — re-import never touches status — the definition (if any) still updates.
 
-The actor on the events comes from `?actor=<name>` or an `actor` form field; the default is `agent`. Import via a form body is also supported (handy in PowerShell): a field named `cards` holding the JSON list as a string.
+The actor on the events comes from `?actor=<name>` or an `actor` form field; the default is `agent`.
+
+Send the list as a UTF-8 file, so no shell re-encodes it:
+
+```
+curl.exe -s -X PUT -H "Content-Type: application/json" --data-binary "@cards.json" "http://127.0.0.1:4300/cards?actor=codex"
+Invoke-RestMethod -Method Put -InFile cards.json -ContentType 'application/json; charset=utf-8' "http://127.0.0.1:4300/cards?actor=claude-code"
+```
+
+Import via a form body is also supported: a field named `cards` holding the JSON list as a string.
 
 ## HTML pages
 

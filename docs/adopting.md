@@ -4,9 +4,13 @@ The board asks nothing of your project: no config file, no scripts, no hooks, no
 
 ## 1. Put the file where you can run it
 
-Copy `agentboard.py` into the repo (or keep it anywhere and pass `--repo`). It is one file with no dependencies: `uv run agentboard.py serve` from the repo root is the whole setup.
+Keep `agentboard.py` anywhere and point it at the repo, or copy it into the repo. It is one file with no dependencies:
 
-If you keep `AgentBoard.md`-style specs, cards will be generated from them; if not, your cards are whatever you and your agents agree on.
+```
+uv run path/to/agentboard.py serve --repo path/to/your-repo
+```
+
+Cards come from wherever your work is already described — specs, an issue list, a planning doc. An agent turns them into the card format and imports them (step 5).
 
 ## 2. Teach `AGENTS.md` about the board
 
@@ -44,7 +48,7 @@ Done detection relies on the branch's commits surviving into the base branch.
 | Squash merge | no — the trace is gone | mark the card done through `POST /cards/{id}/merged` with a note |
 | GitHub "Rebase and merge" | no — commits are rewritten | same as squash |
 
-If you want zero manual steps, keep merge commits on, as the first Prooflane note in the spec recommends: "PRs merged with a merge commit, as now, so the board sees them."
+If you want zero manual steps, merge PRs with a merge commit.
 
 ## 4. Write cards that agents can act on
 
@@ -65,7 +69,7 @@ One prompt to any agent:
 
 > Read `http://127.0.0.1:4300/agent`, then import the cards in `docs/modules/*.md`, in file order.
 
-For work that predates the board, send those cards with `"done": true` so dependencies resolve from day one. Prooflane's first load did exactly this: 102 cards, with the 19 spec cards and the foundation card flagged done. Re-running the import after the specs change updates the not-done cards and leaves the history alone.
+For work that predates the board, send those cards with `"done": true` so dependencies resolve from day one. Re-running the import after the specs change updates the not-done cards and leaves the history alone.
 
 ## 6. Keep guardrails where they are
 

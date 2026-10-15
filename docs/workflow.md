@@ -36,7 +36,7 @@ claimed        --> todo (ready)          agent or person: POST /cards/{id}/relea
 
 **Ready.** A `todo` card whose dependencies are all `done`. `/agent` lists ready cards in import order, so a project sets its priority by import order; "take the next ready card" takes the first one. A card's position never changes on re-import — the original `seq` is kept.
 
-**Claim.** One agent per card, decided in a single SQLite transaction (`BEGIN IMMEDIATE`). Of two simultaneous claims, one gets the card and the other gets `409` naming the holder. A claim changes nothing on disk: no branch, no worktree. The reply gives the branch name `card/{id}`, the worktree path `../<repo>-worktrees/{id}` and the git commands to create it. If the branch already exists — from a released earlier claim, for example — the board tailor-made the commands to continue on it, never to reset it.
+**Claim.** One agent per card, decided in a single SQLite transaction (`BEGIN IMMEDIATE`). Of two simultaneous claims, one gets the card and the other gets `409` naming the holder. A claim changes nothing on disk: no branch, no worktree. The reply gives the branch name `card/{id}`, the worktree path `../<repo>-worktrees/{id}` and the git commands to create it. If the branch already exists — from a released earlier claim, for example — the board tailors the commands to continue on it, never to reset it.
 
 **Report for review.** The board fetches from the remote and accepts only when both facts hold:
 
@@ -45,7 +45,7 @@ claimed        --> todo (ready)          agent or person: POST /cards/{id}/relea
 
 Otherwise the card stays **Claimed** and the reply names the missing fact (and the command that fixes it). When both hold, the card moves to **In review** with the PR link. Whether the code is right is for the repo's CI and the review — not the board.
 
-**Done.** Every 60 seconds while `serve` runs, and on `POST /sync`, the board fetches the base branch. An in-review card whose branch head is contained in the base branch has been merged: the board marks it `done`, records when, and never changes it again. The event's actor is `board`.
+**Done.** Every 60 seconds while `serve` runs, and on `POST /sync`, the board fetches the base branch and the `card/*` branches. An in-review card whose branch head is contained in the base branch has been merged: the board marks it `done`, records when, and never changes it again. The event's actor is `board`.
 
 **Squash merges.** A squash merge leaves no trace of the branch's commits in the base branch, so git cannot prove the merge. A person marks that card done through `POST /cards/{id}/merged` with a note; the event records them and the note. GitHub's "Rebase and merge" rewrites the commits the same way, so it is treated like a squash: use `/merged`.
 

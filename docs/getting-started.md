@@ -59,11 +59,14 @@ If you want to see it move without writing files first, import one card by hand.
 ]
 ```
 
-Then, from any shell (Windows PowerShell uses `curl.exe` — plain `curl` there is a different command):
+Then send the file from any shell. In Windows PowerShell, plain `curl` is a different command, so use `curl.exe` or `Invoke-RestMethod`:
 
 ```
-curl.exe -s -X PUT -H "Content-Type: application/json" --data-binary @cards.json http://127.0.0.1:4300/cards
+curl.exe -s -X PUT -H "Content-Type: application/json" --data-binary "@cards.json" http://127.0.0.1:4300/cards
+Invoke-RestMethod -Method Put -InFile cards.json -ContentType 'application/json; charset=utf-8' http://127.0.0.1:4300/cards
 ```
+
+Send the file rather than a string: Windows PowerShell 5.1 re-encodes string bodies and can lose characters such as accents.
 
 The reply:
 
@@ -71,7 +74,7 @@ The reply:
 Import: 1 created (DEMO-01), 0 updated, 0 unchanged, 0 refused because done.
 ```
 
-Refresh the board: the card sits in **Ready**. Re-running the same import later is safe — it updates definitions of cards that are not done and never touches claims, status or history. `POST`? No: imports are `PUT /cards`. See [api.md](api.md#importing-cards-put-cards) for the full card format and the rules around dependencies.
+Refresh the board: the card sits in **Ready**. Re-running the same import later is safe — it updates definitions of cards that are not done and never touches claims, status or history. Imports use `PUT /cards`; see [api.md](api.md#importing-cards-put-cards) for the full card format and the rules around dependencies.
 
 ## 3. Start an agent
 

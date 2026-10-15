@@ -77,11 +77,15 @@ Invoke-RestMethod -Method Post http://127.0.0.1:4300/cards/IDN-02/claim -Body @{
 ```
 
 **How do I send JSON from PowerShell?**
-`Invoke-RestMethod -ContentType 'application/json' -Body '[...]'` needs careful quoting; the easier paths are a form body (`-Body @{agent='codex'}`) or a file:
+Write it to a UTF-8 file and send the file; a form body (`-Body @{agent='codex'}`) covers everything else:
 
 ```
+Invoke-RestMethod -Method Put -InFile cards.json -ContentType 'application/json; charset=utf-8' http://127.0.0.1:4300/cards
 curl.exe -s -X PUT -H "Content-Type: application/json" --data-binary "@cards.json" http://127.0.0.1:4300/cards
 ```
+
+**Imported titles show `?` instead of accents or symbols.**
+The characters were lost before they reached the board: Windows PowerShell 5.1 encodes a string `-Body` as ISO-8859-1, which has no `→` or `·`. The board reads Windows-1252 and declared charsets correctly, but cannot recover a `?`. Re-import from a UTF-8 file with `-InFile` or `curl.exe --data-binary`; the import updates the affected cards.
 
 ## General questions
 

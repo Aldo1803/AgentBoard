@@ -34,7 +34,7 @@ from html import escape as esc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DEFAULT_PORT = 4300
 DEFAULT_BASE = "main"
 DEFAULT_REMOTE = "origin"
@@ -175,6 +175,18 @@ class GitFacts:
 
     def fetch(self, *refs, timeout=120):
         run_git(["fetch", "--quiet", self.remote, *refs], self.repo, timeout=timeout, check=True)
+
+    def fetch_card_branches(self, timeout=120):
+        """Refresh every remote card/* branch, so merge detection sees heads pushed after a report.
+
+        A wildcard refspec never fails on a missing branch, and nothing is pruned: a branch deleted
+        on the remote after its merge keeps its last tracking ref, which is what detection needs.
+        """
+        run_git(
+            ["fetch", "--quiet", "--no-prune", self.remote,
+             f"+refs/heads/card/*:refs/remotes/{self.remote}/card/*"],
+            self.repo, timeout=timeout, check=True,
+        )
 
     def base_ref(self):
         return f"refs/remotes/{self.remote}/{self.base}"
@@ -897,6 +909,8 @@ class Board:
     def sync(self, actor="board"):
         with self._sync_lock:
             self.git.fetch(self.git.base)
+            if self.store.in_review_branches():
+                self.git.fetch_card_branches()
             base_ref = self.git.base_ref()
             base_head = self.git.last_commit(base_ref)
             merged_ids = []
@@ -1283,17 +1297,21 @@ def render_agent_page(app):
         "checks git facts first; only then does the card move to In review.",
         "- Blocked? POST block with a reason. A person decides; only their unblock returns it "
         "to ready.",
-        "- Done is permanent, and the board owns the states: only claiming, reporting, blocking "
-        "and releasing move a card.",
+        "- Done is permanent, and the board owns the states: agents move a card only by claiming, "
+        "reporting, blocking or releasing it; a person unblocks it or confirms a squash merge; "
+        "the board detects merges.",
         "",
         "## Endpoints (plain text by default; add ?format=json or Accept: application/json)",
-        f"- GET  {base_url}/cards?status=ready     ready cards, one line each",
+        f"- GET  {base_url}/cards?status=ready     ready cards, one line each (no status: every card)",
         f"- GET  {base_url}/cards/{{id}}            one full card: body, scope, deps, events",
         f"- POST {base_url}/cards/{{id}}/claim      body: agent=<your name>",
         f"- POST {base_url}/cards/{{id}}/report     body: pr=<PR URL>, note=<optional>",
         f"- POST {base_url}/cards/{{id}}/block      body: reason=<why>",
         f"- POST {base_url}/cards/{{id}}/release    hand it back to ready (the branch stays)",
         f"- POST {base_url}/cards/{{id}}/unblock    a person's decision, through you: note=<decision>",
+        f"- POST {base_url}/cards/{{id}}/merged     a person confirms a squash merge, through you: note=<who confirmed>",
+        f"- POST {base_url}/sync                   detect merges now (the board also does it every {SYNC_SECONDS} s)",
+        f"- PUT  {base_url}/cards                  import or update cards: a JSON list (see Loading cards below)",
         f"- GET  {base_url}/events?since={{id}}     what changed since an event id",
         "",
         "## Ready cards (import order - take the first one, or the id you were given)",
@@ -1330,6 +1348,32 @@ def render_agent_page(app):
         f"  curl.exe -s -X POST -d pr=https://github.com/org/repo/pull/12 "
         f"{base_url}/cards/IDN-02/report"
     )
+    lines.extend([
+        "",
+        "## Loading cards (only when a person asks you to import or update cards)",
+        "Write the cards to a UTF-8 file, cards.json, as a JSON list, then PUT it. Send the file,",
+        "not a string: Windows PowerShell 5.1 re-encodes string bodies and loses characters.",
+        "",
+        "  [",
+        "    {",
+        '      "id": "IDN-02",                       required: letters, digits, dashes; at most 32',
+        '      "title": "OIDC sign-in and callback",  required',
+        '      "group": "identity",                   module or area',
+        '      "depends_on": ["IDN-01"],              ids that must be done first',
+        '      "scope": ["server/internal/modules/identity/**"],',
+        '      "source": "docs/modules/identity.md",',
+        '      "body": "markdown: what to build and the acceptance criteria",',
+        '      "done": false                          true only for work finished before the board',
+        "    }",
+        "  ]",
+        "",
+        "List cards in priority order: ready cards are offered in import order. Re-importing is",
+        "safe: it updates cards that are not done and never touches claims, status or history.",
+        "An unknown dependency or a cycle refuses the whole request; nothing is saved.",
+        "",
+        f"  curl.exe -s -X PUT -H \"Content-Type: application/json\" --data-binary \"@cards.json\" \"{base_url}/cards?actor=<your name>\"",
+        f"  Invoke-RestMethod -Method Put -InFile cards.json -ContentType 'application/json; charset=utf-8' \"{base_url}/cards?actor=<your name>\"",
+    ])
     return "\n".join(lines) + "\n"
 
 
@@ -1693,6 +1737,28 @@ def render_card_page_html(app, card_id):
     )
 
 
+def decode_body(raw, content_type=None):
+    """Request bytes to text without silently losing characters.
+
+    UTF-8 first (a leading BOM is dropped). Windows PowerShell 5.1 sends a string body as
+    ISO-8859-1 unless told otherwise, so a declared charset is honoured next, and Windows-1252
+    (a superset of ISO-8859-1's printable range) is the last resort.
+    """
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    match = re.search(r"charset=([\w.:-]+)", content_type or "", re.IGNORECASE)
+    if match:
+        try:
+            return raw.decode(match.group(1))
+        except (LookupError, UnicodeDecodeError):
+            pass
+    return raw.decode("cp1252", "replace")
+
+
 def make_server(app, port):
     BoardHTTP.app = app
     httpd = ThreadingHTTPServer(("127.0.0.1", port), BoardHTTP)
@@ -1776,7 +1842,7 @@ class BoardHTTP(BaseHTTPRequestHandler):
         if not raw:
             return {}
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        text = raw.decode("utf-8", "replace")
+        text = decode_body(raw, self.headers.get("Content-Type"))
         stripped = text.lstrip()
         if ctype == "application/json" or (
             stripped[:1] in ("{", "[") and ctype != "application/x-www-form-urlencoded"
@@ -2410,7 +2476,8 @@ def t11_agent_page_selfsufficient():
         first_line = text.splitlines()[0]
         assert "shell" in first_line and "web tool" in first_line, first_line
         for token in ("Invoke-RestMethod", "curl.exe", "AG-01", "/claim", "/report",
-                      "AGENTS.md", "go-ahead", env.base_url):
+                      "AGENTS.md", "go-ahead", env.base_url, "PUT", "/merged", "/sync",
+                      "depends_on", "--data-binary", "-InFile"):
             assert token in text, f"/agent is missing {token!r}"
         code, data = env.json("GET", "/agent")
         assert code == 200 and data["ready"], data
@@ -2504,6 +2571,52 @@ def t16_stale_marker():
             STALE_SECONDS = saved
         code, data = env.json("GET", "/cards?status=claimed")
         assert data["cards"][0]["stale"] is False, data
+
+
+@selftest
+def t17_body_encodings():
+    with temp_env() as env:
+        def put_raw(raw, content_type):
+            req = urllib.request.Request(
+                env.base_url + "/cards?actor=tester&format=json", data=raw, method="PUT",
+                headers={"Content-Type": content_type},
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.status
+        text = '[{"id": "ENC-01", "title": "Configuración de importación"}]'
+        assert put_raw(text.encode("cp1252"), "application/json") == 200
+        assert env.app.store.get_row("ENC-01")["title"] == "Configuración de importación"
+        text = '[{"id": "ENC-02", "title": "Señal"}]'
+        assert put_raw(text.encode("iso-8859-1"), "application/json; charset=iso-8859-1") == 200
+        assert env.app.store.get_row("ENC-02")["title"] == "Señal"
+        text = '[{"id": "ENC-03", "title": "Ruta → paso · listo"}]'
+        assert put_raw(b"\xef\xbb\xbf" + text.encode("utf-8"), "application/json") == 200
+        assert env.app.store.get_row("ENC-03")["title"] == "Ruta → paso · listo"
+
+
+@selftest
+def t18_merge_detected_after_rewrite_elsewhere():
+    with temp_env() as env:
+        import_cards(env, [{"id": "FP-01", "title": "rewritten after review"}])
+        claim_and_finish(env, "FP-01")
+        # The review fix is pushed from another clone (a reviewer, another machine), rewriting the
+        # branch; the board's clone has never seen the new head before it is merged.
+        gitx(["fetch", "origin"], env.seed)
+        gitx(["checkout", "-B", "review-fix", "origin/card/FP-01"], env.seed)
+        (env.seed / "change.txt").write_text("rewritten after review\n", encoding="utf-8")
+        gitx(["add", "-A"], env.seed)
+        gitx(["commit", "--amend", "-m", "FP-01 work, rewritten"], env.seed)
+        gitx(["push", "--force", "origin", "HEAD:card/FP-01"], env.seed)
+        code, data = env.json("POST", "/sync")  # a regular sync while the PR is open
+        assert code == 200 and data["newly_done"] == [], (code, data)
+        # Merged with a merge commit, and the branch deleted on merge, as GitHub can do.
+        gitx(["fetch", "origin"], env.seed)
+        gitx(["checkout", "main"], env.seed)
+        gitx(["merge", "--no-ff", "origin/card/FP-01", "-m", "merge FP-01"], env.seed)
+        gitx(["push", "origin", "main"], env.seed)
+        gitx(["push", "origin", "--delete", "card/FP-01"], env.seed)
+        code, data = env.json("POST", "/sync")
+        assert code == 200 and data["newly_done"] == ["FP-01"], (code, data)
 
 
 def run_selftest():
