@@ -303,26 +303,26 @@ CREATE TRIGGER IF NOT EXISTS trg_done_no_update
 BEFORE UPDATE ON cards
 WHEN OLD.status = 'done'
 BEGIN
-    SELECT RAISE(ABORT, 'done cards are permanent: refusing to change ' || OLD.id);
+    SELECT RAISE(ABORT, 'done cards are permanent: refusing to change a done card');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_done_no_delete
 BEFORE DELETE ON cards
 WHEN OLD.status = 'done'
 BEGIN
-    SELECT RAISE(ABORT, 'done cards are permanent: refusing to delete ' || OLD.id);
+    SELECT RAISE(ABORT, 'done cards are permanent: refusing to delete a done card');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_events_no_update
 BEFORE UPDATE ON events
 BEGIN
-    SELECT RAISE(ABORT, 'events are append-only: refusing to change event ' || OLD.id);
+    SELECT RAISE(ABORT, 'events are append-only: refusing to change an event');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_events_no_delete
 BEFORE DELETE ON events
 BEGIN
-    SELECT RAISE(ABORT, 'events are append-only: refusing to delete event ' || OLD.id);
+    SELECT RAISE(ABORT, 'events are append-only: refusing to delete an event');
 END;
 """
 

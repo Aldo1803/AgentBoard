@@ -81,21 +81,23 @@ Four triggers ship with the schema. They protect the guarantees even if someone 
 CREATE TRIGGER trg_done_no_update
 BEFORE UPDATE ON cards
 WHEN OLD.status = 'done'
-BEGIN SELECT RAISE(ABORT, 'done cards are permanent: refusing to change ' || OLD.id); END;
+BEGIN SELECT RAISE(ABORT, 'done cards are permanent: refusing to change a done card'); END;
 
 CREATE TRIGGER trg_done_no_delete
 BEFORE DELETE ON cards
 WHEN OLD.status = 'done'
-BEGIN SELECT RAISE(ABORT, 'done cards are permanent: refusing to delete ' || OLD.id); END;
+BEGIN SELECT RAISE(ABORT, 'done cards are permanent: refusing to delete a done card'); END;
 
 CREATE TRIGGER trg_events_no_update
 BEFORE UPDATE ON events
-BEGIN SELECT RAISE(ABORT, 'events are append-only: refusing to change event ' || OLD.id); END;
+BEGIN SELECT RAISE(ABORT, 'events are append-only: refusing to change an event'); END;
 
 CREATE TRIGGER trg_events_no_delete
 BEFORE DELETE ON events
-BEGIN SELECT RAISE(ABORT, 'events are append-only: refusing to delete event ' || OLD.id); END;
+BEGIN SELECT RAISE(ABORT, 'events are append-only: refusing to delete an event'); END;
 ```
+
+(Triggers use plain string messages, not expressions: `RAISE` only accepts an expression in newer SQLite, and the board supports the older system SQLite that ships with Python on common Linux distributions.)
 
 The transition into done is the one update the first trigger allows — its `OLD.status` is `in_review` — and it writes `done_at` in the same statement. After that, the row is frozen. A re-import that touches a done card is skipped before it can even reach the trigger, and the card is listed in the reply under "refused because done".
 
