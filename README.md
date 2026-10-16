@@ -63,5 +63,4 @@ uv run agentboard.py serve --repo . --base main --remote origin --port 4300
 | [docs/architecture.md](docs/architecture.md) | How the single file is built; testing |
 | [docs/adopting.md](docs/adopting.md) | Using it in a real repo |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Errors and fixes, FAQ |
-
-The product spec is in [AgentBoard.md](AgentBoard.md).
+| [docs/spec.md](docs/spec.md) | The product spec and its acceptance criteria |
