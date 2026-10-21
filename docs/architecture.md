@@ -18,6 +18,12 @@ AgentBoard is two scripts, both run with `uv`. Their PEP 723 headers declare the
 
 The daemon's standard library is its whole dependency list: `http.server` (threaded), `sqlite3`, `subprocess` (for `git` alone), `json`, plus `argparse`, `datetime`, `pathlib`, `threading`, and friends. A machine needs `uv` and `git`; the board never runs anything else. The console is a thin client of the daemon and adds one dependency, Textual (and its pure-Python tree), fetched by `uv` only when the console runs.
 
+## Packaging and launch
+
+`pyproject.toml` makes the checkout installable as a uv tool: `uv tool install --editable .` creates the `board` and `agentboard` commands, both pointing at `agentboard:main`. The wheel ships `agentboard.py` and `agentboard-tui.py` side by side at the top level, which is what lets `board tui` hand the console to `uv run --script` while the daemon's environment stays stdlib-only.
+
+Without a subcommand the CLI serves (`board`, or `board --repo …`); `board tui`, `board status` and `board selftest` cover the rest. The source checkout keeps working exactly as before with `uv run agentboard.py …`, which is also what CI and the tests use.
+
 ## The daemon, top to bottom
 
 | Section | What lives there |

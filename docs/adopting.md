@@ -16,6 +16,8 @@ The console next to it, `agentboard-tui.py`, declares Textual in its script head
 uv run path/to/agentboard-tui.py
 ```
 
+One-time shortcut for both: `uv tool install --editable path/to/AgentBoard` (add `uv tool update-shell` if `board` is not found), then `board serve --repo path/to/your-repo` and `board tui`.
+
 Cards come from wherever your work is already described — specs, an issue list, a planning doc. An agent turns them into the card format and imports them (step 5).
 
 ## 2. Teach `AGENTS.md` about the board

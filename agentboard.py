@@ -20,6 +20,7 @@ import http.client
 import json
 import re
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -35,7 +36,7 @@ from html import escape as esc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_PORT = 4300
 DEFAULT_BASE = "main"
 DEFAULT_REMOTE = "origin"
@@ -344,11 +345,21 @@ class Store:
     def __init__(self, db_path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = self.connect()
         try:
-            conn.executescript(SCHEMA)
-        finally:
-            conn.close()
+            conn = self.connect()
+            try:
+                conn.executescript(SCHEMA)
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError as exc:
+            if "malformed database schema" in str(exc):
+                raise SystemExit(
+                    f"agentboard: {self.db_path} cannot be opened ({exc}). "
+                    "It was created by an older version whose trigger SQL current SQLite rejects. "
+                    "Delete that file (and any -wal/-shm siblings) and start the board again; "
+                    "re-import your cards to rebuild the board."
+                ) from exc
+            raise
 
     def connect(self):
         conn = sqlite3.connect(str(self.db_path), timeout=30, isolation_level=None)
@@ -2881,32 +2892,68 @@ def cmd_selftest(args):
     return run_selftest()
 
 
+def cmd_tui(args):
+    script = Path(__file__).resolve().with_name("agentboard-tui.py")
+    if not script.is_file():
+        die("agentboard-tui.py is missing next to agentboard.py; keep the two files together.")
+    uv = shutil.which("uv")
+    if not uv:
+        die("the console runs through uv; install uv or run agentboard-tui.py directly.")
+    command = [uv, "run", "--script", str(script)]
+    if args.selftest:
+        command.append("--selftest")
+        if args.url:
+            command.extend(["--url", args.url])
+    else:
+        command.extend(["--url", args.url or f"http://127.0.0.1:{DEFAULT_PORT}"])
+    return subprocess.call(command)
+
+
 def main(argv=None):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if not raw:
+        raw = ["serve"]
+    elif raw[0].startswith("-") and raw[0] not in ("-h", "--help", "--version"):
+        raw.insert(0, "serve")
     parser = argparse.ArgumentParser(
-        prog="agentboard.py",
+        prog="agentboard",
         description="AgentBoard - a shared list of cards that coding agents read, claim and report on.",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--version", action="version", version=f"AgentBoard {VERSION}")
+    sub = parser.add_subparsers(dest="command")
     for name, help_text in (
-        ("serve", "start the board on 127.0.0.1 and sync every 60 seconds"),
+        ("serve", "start the board on 127.0.0.1 and sync every 60 seconds (default)"),
         ("status", "print the board as text, without a server"),
-        ("selftest", "run the built-in tests"),
+        ("selftest", "run the daemon's built-in tests"),
+        ("tui", "open the terminal console against a running board"),
     ):
         sp = sub.add_parser(name, help=help_text, description=help_text)
-        sp.add_argument("--repo", default=".", help="the repository the board serves (default: .)")
-        sp.add_argument("--base", default=DEFAULT_BASE, help=f"base branch (default: {DEFAULT_BASE})")
-        sp.add_argument("--remote", default=DEFAULT_REMOTE, help=f"git remote (default: {DEFAULT_REMOTE})")
-        sp.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default: {DEFAULT_PORT})")
-    args = parser.parse_args(argv)
-    if args.command == "serve":
+        if name == "tui":
+            sp.add_argument(
+                "--url",
+                default=None,
+                help=f"the board's address (default: http://127.0.0.1:{DEFAULT_PORT})",
+            )
+            sp.add_argument(
+                "--selftest", action="store_true", help="run the console's headless checks instead"
+            )
+        else:
+            sp.add_argument("--repo", default=".", help="the repository the board serves (default: .)")
+            sp.add_argument("--base", default=DEFAULT_BASE, help=f"base branch (default: {DEFAULT_BASE})")
+            sp.add_argument("--remote", default=DEFAULT_REMOTE, help=f"git remote (default: {DEFAULT_REMOTE})")
+            sp.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default: {DEFAULT_PORT})")
+    args = parser.parse_args(raw)
+    if args.command in (None, "serve"):
         return cmd_serve(args)
     if args.command == "status":
         return cmd_status(args)
+    if args.command == "tui":
+        return cmd_tui(args)
     return cmd_selftest(args)
 
 

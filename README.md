@@ -15,9 +15,23 @@ uv run agentboard.py serve       # daemon: http://127.0.0.1:4300
 uv run agentboard-tui.py         # console, in a second terminal
 ```
 
+Or, after the one-time install below, the short form: `board serve` and `board tui`.
+
 - **Agents** start at <http://127.0.0.1:4300/agent>, which tells them everything they need.
 - **People** open <http://127.0.0.1:4300/> to watch, or the console to operate.
 - **Nothing here starts, prompts or watches an agent.** The board is middleware between people, agents and git.
+
+## Install once, then use `board`
+
+```
+uv tool install --editable path/to/this/repo
+board serve --repo path/to/your-repo     # daemon (or: cd your-repo && board)
+board tui                                # console, second terminal
+```
+
+`uv tool install` puts `board` and `agentboard` in uv's tool bin directory. If the command is not found, run `uv tool update-shell` once and reopen the terminal. The install is editable, so pulling changes is enough — no reinstall.
+
+`board` with no subcommand is `serve`; `board --repo PATH` is the same as `board serve --repo PATH`. Without the install, everything still runs from the checkout with `uv run agentboard.py …` and `uv run agentboard-tui.py …`.
 
 ## The idea in six lines
 
@@ -36,17 +50,17 @@ uv run agentboard-tui.py         # console, in a second terminal
 
 | Command | Does |
 | --- | --- |
-| `uv run agentboard.py serve` | Starts the daemon on 127.0.0.1 and syncs with git every 60 seconds |
-| `uv run agentboard.py status` | Prints the board as text, without a server |
-| `uv run agentboard.py selftest` | Runs the daemon's built-in tests in temporary repositories |
-| `uv run agentboard-tui.py` | Opens the console against a running daemon |
-| `uv run agentboard-tui.py --selftest` | Runs the console's headless checks |
-| `uv run agentboard-tui.py --url http://127.0.0.1:4301` | Points the console at another board |
+| `board` / `board serve` | Starts the daemon on 127.0.0.1 and syncs with git every 60 seconds |
+| `board status` | Prints the board as text, without a server |
+| `board selftest` | Runs the daemon's built-in tests in temporary repositories |
+| `board tui` | Opens the console against a running daemon |
+| `board tui --selftest` | Runs the console's headless checks |
+| `board tui --url http://127.0.0.1:4301` | Points the console at another board |
 
-Settings are flags with defaults, so most projects need none:
+From the checkout, replace `board` with `uv run agentboard.py` (`board tui` becomes `uv run agentboard.py tui`). Settings are flags with defaults, so most projects need none:
 
 ```
-uv run agentboard.py serve --repo . --base main --remote origin --port 4300
+board serve --repo . --base main --remote origin --port 4300
 ```
 
 ## What the board guarantees
@@ -86,4 +100,4 @@ uv run agentboard.py selftest        # 19 daemon tests
 uv run agentboard-tui.py --selftest  # console checks, headless
 ```
 
-CI runs both on Ubuntu, macOS and Windows. Every test builds its own temporary git repositories and servers; nothing in your working tree or git config is touched.
+CI runs both on Ubuntu, macOS and Windows, and builds the wheel (`uv build`). Every test builds its own temporary git repositories and servers; nothing in your working tree or git config is touched.

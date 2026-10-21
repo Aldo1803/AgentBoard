@@ -56,7 +56,7 @@ Otherwise the card stays **Claimed** and the reply names the missing fact (and t
 
 ## The console
 
-`uv run agentboard-tui.py` (a second terminal, with the daemon running) is the operator's surface. It shows the board as a live table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab of agents and recent events. The daemon pushes updates over SSE, so the view follows claims, blocks and merges without refreshing.
+`uv run agentboard-tui.py` (or `board tui`, after the shortcut install; a second terminal, with the daemon running) is the operator's surface. It shows the board as a live table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab of agents and recent events. The daemon pushes updates over SSE, so the view follows claims, blocks and merges without refreshing.
 
 Keys: `j`/`k` or arrows to move, `/` or `f` to filter, `g` to cycle the state filter, `1`/`2` for Board/Activity, `?` for help, `q` to quit.
 

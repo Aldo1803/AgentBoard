@@ -2,6 +2,23 @@
 
 Every refusal is a status code plus one plain sentence that says what to do next. This page collects the ones you are most likely to meet.
 
+## Launching
+
+**`board: command not found`.**
+The shortcut is installed into uv's tool bin directory. Run `uv tool update-shell` once and reopen the terminal, or call `uv run path/to/agentboard.py serve` directly. If you never installed it: `uv tool install --editable path/to/AgentBoard`.
+
+**`board tui` says uv is missing.**
+The console is launched through `uv`, which also satisfies its Textual dependency from the script header. Install uv, or run `agentboard-tui.py` from an environment that already has Textual.
+
+**`board tui` says `agentboard-tui.py` is missing.**
+Keep the two scripts side by side (the wheel ships them together), or reinstall the tool.
+
+**`board` started but I wanted `status`.**
+`board` with no subcommand serves. Use `board status`, or `board tui` for the console.
+
+**The board refuses to start: `cannot be opened … malformed database schema`.**
+That SQLite file was created by an older AgentBoard whose trigger SQL current SQLite rejects. Stop the board, delete `.git/agentboard/` (the whole directory), start again, and re-import your cards — finished work sent with `"done": true` comes back done.
+
 ## Starting the board
 
 **`agentboard needs a git repository: run it from inside one, or pass --repo PATH.`**

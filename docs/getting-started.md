@@ -14,12 +14,23 @@ git --version
 
 Nothing else to install by hand. The daemon is standard-library only; the console's one dependency (Textual) is declared in its script header, and `uv` fetches it the first time you open the console.
 
+## 0.5 Shortcut (once, recommended)
+
+```
+uv tool install --editable path/to/AgentBoard
+uv tool update-shell        # if `board` is not found; reopen the terminal afterwards
+```
+
+Then the commands below shorten to `board serve`, `board tui`, `board status`, `board selftest`. Without the shortcut, use `uv run path/to/agentboard.py serve` and `uv run path/to/agentboard-tui.py`.
+
 ## 1. Start the board in your repo
 
 ```
 cd path/to/your-repo
-uv run agentboard.py serve
+board serve
 ```
+
+(Without the shortcut: `uv run path/to/agentboard.py serve --repo path/to/your-repo`.)
 
 You should see:
 
@@ -144,8 +155,10 @@ When a card is done, cards that were waiting on it become ready, in import order
 In a second terminal, from the repo:
 
 ```
-uv run agentboard-tui.py
+board tui
 ```
+
+(Without the shortcut: `uv run path/to/agentboard-tui.py`.)
 
 The console is a client of the running daemon: a live board table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab that lists agents and what they have been doing. It follows the same live stream as the page, so claims, blocks and merges appear without refreshing.
 
