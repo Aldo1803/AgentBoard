@@ -12,7 +12,7 @@ uv --version
 git --version
 ```
 
-Nothing else. No packages to install, no config file to keep in step.
+Nothing else to install by hand. The daemon is standard-library only; the console's one dependency (Textual) is declared in its script header, and `uv` fetches it the first time you open the console.
 
 ## 1. Start the board in your repo
 
@@ -137,7 +137,23 @@ When a card is done, cards that were waiting on it become ready, in import order
 
 ## 6. Watch it all on one page
 
-<http://127.0.0.1:4300/> shows six columns — Waiting, Ready, Claimed, In review, Blocked, Done — updating within five seconds. Each card links to its own page (`/view/DEMO-01`) with the body, dependencies, scope, branch and the full event history. There are no buttons: the page reports, it never operates.
+<http://127.0.0.1:4300/> shows six columns — Waiting, Ready, Claimed, In review, Blocked, Done — a per-agent strip, and a condensed recent-activity list. Changes arrive over an SSE stream within a second; if the stream cannot connect, the page falls back to five-second polling. Each card links to its own page (`/view/DEMO-01`) with the body, dependencies, scope, branch and the full event history. There are no buttons: the page reports, it never operates.
+
+## 7. Operate from the console
+
+In a second terminal, from the repo:
+
+```
+uv run agentboard-tui.py
+```
+
+The console is a client of the running daemon: a live board table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab that lists agents and what they have been doing. It follows the same live stream as the page, so claims, blocks and merges appear without refreshing.
+
+- `j`/`k` or arrows move; `/` or `f` filters; `g` cycles the state filter; `1`/`2` switch Board/Activity; `?` shows all keys.
+- `a` opens the actions for the selected card: **claim for an agent** (you enter the agent's name and get the worktree commands to hand over), **release**, **unblock with a note**, **mark merged** (squash), and `s` **syncs** now.
+- Every action is recorded by the board — as `person`, or under the agent's name for a claim — and is visible in the event log. The console never runs an agent and never touches git.
+
+If the daemon is down, the status bar says offline and the console keeps retrying. Windows: run it in **Windows Terminal**, not legacy conhost.
 
 ## Try it without a project
 

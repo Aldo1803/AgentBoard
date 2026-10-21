@@ -1,17 +1,24 @@
 # Architecture
 
-AgentBoard is one file, `agentboard.py`, run with `uv`. Its PEP 723 header declares the Python version, so `uv` fetches the right interpreter and nothing else:
+AgentBoard is two scripts, both run with `uv`. Their PEP 723 headers declare the Python version and dependencies, so `uv` fetches the right interpreter and nothing else:
 
 ```python
+# agentboard.py (the daemon)
 # /// script
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
+
+# agentboard-tui.py (the console)
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["textual>=8.2,<9"]
+# ///
 ```
 
-The standard library is the whole dependency list: `http.server` (threaded), `sqlite3`, `subprocess` (for `git` alone), `json`, plus `argparse`, `datetime`, `pathlib`, `threading`, and friends. A machine needs `uv` and `git`; the board never runs anything else.
+The daemon's standard library is its whole dependency list: `http.server` (threaded), `sqlite3`, `subprocess` (for `git` alone), `json`, plus `argparse`, `datetime`, `pathlib`, `threading`, and friends. A machine needs `uv` and `git`; the board never runs anything else. The console is a thin client of the daemon and adds one dependency, Textual (and its pure-Python tree), fetched by `uv` only when the console runs.
 
-## The file, top to bottom
+## The daemon, top to bottom
 
 | Section | What lives there |
 | --- | --- |
@@ -23,9 +30,10 @@ The standard library is the whole dependency list: `http.server` (threaded), `sq
 | `App` / `build_app` | repo resolution, database path, wiring |
 | Text renderers | the plain-text answers for every endpoint and for `status` |
 | HTML | one page shell, inline CSS (light/dark via `prefers-color-scheme`), inline JS, board and card pages |
+| SSE | `GET /events/stream`: a snapshot event, then event entries; one poll loop per connection, 15-second heartbeat |
 | `BoardHTTP` | the threaded HTTP server: routing, content negotiation, body parsing, error formatting |
 | CLI | `serve`, `status`, `selftest` and the flags |
-| Selftest | 18 tests, temp repositories, ephemeral ports |
+| Selftest | 19 tests, temp repositories, ephemeral ports |
 
 ## Request lifecycle
 
@@ -33,6 +41,16 @@ The standard library is the whole dependency list: `http.server` (threaded), `sq
 2. The router matches path and method. Bodies are decoded as UTF-8 (a BOM is dropped), then as the declared charset, then as Windows-1252, so a Windows PowerShell 5.1 string body keeps its accents. They parse as JSON, as form fields, or — for imports — as a JSON string in a `cards` field. Responses are plain text unless the request asks for JSON (`?format=json` or `Accept: application/json`).
 3. Operations raise `APIError(status, sentence)`; one catch-all formats both text (`sentence`) and JSON (`{"error": sentence}`). Git failures raise `GitError`, which maps to `502` with a sentence that says what to do.
 4. Writes run in `BEGIN IMMEDIATE` transactions, so simultaneous claims serialize on the database itself. Git reads that need the network (`ls-remote`, `fetch`) happen outside every transaction.
+
+## The live layer
+
+`GET /events/stream` is the push side of the same state. It sends an `event: snapshot` with the full board, then one `event:` entry per new event, so clients never ask "has anything changed?". A heartbeat comment every 15 seconds keeps the connection warm. The web page uses `EventSource` and falls back to five-second polling if the stream cannot connect; the console does the same through a background thread. The stream is read-only and stateless: it writes nothing and holds no lock.
+
+## The console
+
+`agentboard-tui.py` is a Textual application and a pure client of the daemon. Every read is `GET /board`, `GET /cards/{id}` or `GET /events`; the live feed is `/events/stream`; every action is one of the daemon's existing POST routes. It stores nothing, runs no git, and writes no files — the daemon stays the single source of truth, the same pattern as OpenCode's TUI talking to its own server.
+
+The layout is a board table (state, id, title, holder, age) beside a detail pane (facts, body, dependencies, events), plus an Activity tab listing agents and their recent events. Textual provides the CSS layout, keybindings and a footer of live hints; the console adds `/` or `f` filtering, `g` state cycling, `a` confirmed actions, `s` sync on a worker thread, and `?` help. Actions are deliberately narrow and all recorded: claim for a named agent, release, unblock with a note, mark merged, sync. The headless test (`uv run agentboard-tui.py --selftest`) drives the real widgets against a stub board — and against a live one when given `--url`.
 
 ## The sync loop
 
@@ -53,13 +71,13 @@ Git is always invoked with an argument list — `subprocess.run(["git", …])`, 
 ## Security posture
 
 - Binds `127.0.0.1` only. No accounts, no tokens, no remote access — by design; the board is a development aid on one machine.
-- The pages fetch nothing from the internet, and contain no controls that change state.
+- The web pages fetch nothing from the internet, and contain no controls that change state. The console has no web content; it talks to the same loopback API, stores nothing, and confirms every action.
 - All card content is HTML-escaped at render time. Card texts are untrusted input.
 - The board runs no program but `git`, and accepts no instructions from a card's contents — it is not an agent runtime.
 
 ## Testing: `uv run agentboard.py selftest`
 
-The built-in tests are the acceptance criteria from [spec.md](spec.md), executable. They create their own throwaway world: a bare `origin.git`, a seed clone, a work clone, and a real HTTP server on an ephemeral port — so the HTTP layer, the transactions and the git plumbing are all exercised end to end. No network beyond local file paths, no user git config touched (`user.name` and such are passed with `-c` on each call), and `tempfile` cleans up everything.
+The built-in tests cover the acceptance criteria from the original [spec.md](spec.md) plus the live layer added later. They create their own throwaway world: a bare `origin.git`, a seed clone, a work clone, and a real HTTP server on an ephemeral port — so the HTTP layer, the transactions, the SSE stream and the git plumbing are all exercised end to end. No network beyond local file paths, no user git config touched (`user.name` and such are passed with `-c` on each call), and `tempfile` cleans up everything.
 
 | Test | Proves |
 | --- | --- |
@@ -81,12 +99,15 @@ The built-in tests are the acceptance criteria from [spec.md](spec.md), executab
 | `t16_stale_marker` | a claim older than 4 hours is marked stale — shown only, nothing changes |
 | `t17_body_encodings` | Windows-1252, ISO-8859-1 and BOM-prefixed UTF-8 bodies import without losing accents |
 | `t18_merge_detected_after_rewrite_elsewhere` | a branch rewritten from another clone while in review, then merged and deleted, is still detected |
+| `t19_board_snapshot_and_sse` | `GET /board` returns counts, facts and cards; `/events/stream` opens with a snapshot and then pushes each new event |
 
-CI runs `uv run agentboard.py selftest` on Ubuntu, macOS and Windows (`.github/workflows/ci.yml`), which is where the "same on every OS" claim is kept honest. The suite takes on the order of a minute or two, mostly git worktree setup.
+CI runs `uv run agentboard.py selftest` and `uv run agentboard-tui.py --selftest` on Ubuntu, macOS and Windows (`.github/workflows/ci.yml`), which is where the "same on every OS" claim is kept honest. The console test runs Textual headless, so it needs no terminal; the daemon suite takes on the order of a minute, mostly git worktree setup.
 
 ## Portability notes
 
 - Python ≥ 3.12 via `uv run`, on Windows, macOS and Linux.
+- The daemon is stdlib-only; the console declares Textual in its PEP 723 header, and `uv` installs it on first run.
 - `sys.stdout`/`stderr` are reconfigured to UTF-8 at startup so agent-facing text survives any console codepage.
 - No shell semantics anywhere: no `shell=True`, no string-built commands, no `&&` inside the product.
 - Worktrees are suggested *beside* the repo (`../<repo>-worktrees/<id>`), which keeps editor watchers out of them and Windows paths short.
+- The console needs a modern terminal: Windows Terminal (not legacy conhost), or any VT-capable terminal on macOS/Linux.

@@ -2,12 +2,18 @@
 
 The board asks nothing of your project: no config file, no scripts, no hooks, no CI changes. Adoption is a habit change plus a few paragraphs in `AGENTS.md`.
 
-## 1. Put the file where you can run it
+## 1. Put the files where you can run them
 
 Keep `agentboard.py` anywhere and point it at the repo, or copy it into the repo. It is one file with no dependencies:
 
 ```
 uv run path/to/agentboard.py serve --repo path/to/your-repo
+```
+
+The console next to it, `agentboard-tui.py`, declares Textual in its script header; `uv` fetches it on first run:
+
+```
+uv run path/to/agentboard-tui.py
 ```
 
 Cards come from wherever your work is already described — specs, an issue list, a planning doc. An agent turns them into the card format and imports them (step 5).
@@ -80,6 +86,7 @@ The board deliberately knows nothing about your tests, lint or setup. The edit h
 1. A person keeps the board running (it can be restarted any time; state is in `.git/agentboard/`).
 2. Agents are started per card or per lane — Claude Code, Codex, OpenCode, in as many terminals as wanted.
 3. Card plans are approved by a person before claiming; the board is the shared source of truth after that.
-4. PRs are reviewed and merged as usual; the board notices.
-5. Any agent can import an updated spec at any time — re-import is safe by design.
-6. When something is stuck, look at the board first: a stale claim, a blocked reason, or a waiting card usually explains why.
+4. One terminal keeps the console (`uv run agentboard-tui.py`) open for live status and the occasional release, unblock or squash confirmation.
+5. PRs are reviewed and merged as usual; the board notices.
+6. Any agent can import an updated spec at any time — re-import is safe by design.
+7. When something is stuck, look at the board first: a stale claim, a blocked reason, or a waiting card usually explains why.

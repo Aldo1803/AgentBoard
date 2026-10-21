@@ -2,16 +2,22 @@
 
 [![CI](https://github.com/Aldo1803/AgentBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/Aldo1803/AgentBoard/actions/workflows/ci.yml)
 
-A single-file local server that hands units of work (**cards**) to coding agents and records what happens to them. Agents are the users; the page people see is read-only.
+A local-first board that hands units of work (**cards**) to coding agents and records what happens to them. Agents are its users; the web page is read-only; the terminal console is the operator's.
 
-One Python file, no third-party packages, no config file, no agent runtime. It keeps a shared list of cards that any agent can read, claim and report on, while each person keeps using the agent they trust — Claude Code, Codex, OpenCode — in their own terminal.
+Three pieces, one repo:
+
+- **`agentboard.py`** — the daemon. One stdlib-only Python file: SQLite state, a plain-text/JSON HTTP API for agents, a read-only web board, an SSE live feed, and git-fact checks before review and done.
+- **`agentboard-tui.py`** — the console. A Textual client of the daemon for people who live in terminals: live board, filter, detail, per-agent activity, and confirmed actions.
+- **`docs/`** — the manual.
 
 ```
-uv run agentboard.py serve        # http://127.0.0.1:4300
+uv run agentboard.py serve       # daemon: http://127.0.0.1:4300
+uv run agentboard-tui.py         # console, in a second terminal
 ```
 
-- **People** open <http://127.0.0.1:4300/> and watch.
 - **Agents** start at <http://127.0.0.1:4300/agent>, which tells them everything they need.
+- **People** open <http://127.0.0.1:4300/> to watch, or the console to operate.
+- **Nothing here starts, prompts or watches an agent.** The board is middleware between people, agents and git.
 
 ## The idea in six lines
 
@@ -24,15 +30,18 @@ uv run agentboard.py serve        # http://127.0.0.1:4300
 
 ## Requirements
 
-`uv` and `git`. Nothing else. The same on Windows, macOS and Linux.
+`uv` and `git`. Nothing else to install by hand: the daemon is standard-library only, and `uv` fetches the console's one dependency (Textual) from the script header. The same on Windows, macOS and Linux — use Windows Terminal for the console (legacy conhost has poor Unicode/font support).
 
 ## Commands
 
 | Command | Does |
 | --- | --- |
-| `uv run agentboard.py serve` | Starts the board on 127.0.0.1 and syncs with git every 60 seconds |
+| `uv run agentboard.py serve` | Starts the daemon on 127.0.0.1 and syncs with git every 60 seconds |
 | `uv run agentboard.py status` | Prints the board as text, without a server |
-| `uv run agentboard.py selftest` | Runs the built-in tests in temporary repositories |
+| `uv run agentboard.py selftest` | Runs the daemon's built-in tests in temporary repositories |
+| `uv run agentboard-tui.py` | Opens the console against a running daemon |
+| `uv run agentboard-tui.py --selftest` | Runs the console's headless checks |
+| `uv run agentboard-tui.py --url http://127.0.0.1:4301` | Points the console at another board |
 
 Settings are flags with defaults, so most projects need none:
 
@@ -47,6 +56,11 @@ uv run agentboard.py serve --repo . --base main --remote origin --port 4300
 - **One claim per card**, enforced in a single SQLite transaction; the loser of a race gets a `409` naming the holder.
 - **Nothing changes by itself.** Apart from detecting merges, the board moves a card only when an agent or a person asks. A stale claim is shown, never released.
 - **Every change is an event** with its actor and time, append-only.
+- **The web page is read-only.** The console is the operator's surface: it claims for an agent, releases, unblocks, confirms a squash merge, and syncs — every one of those recorded as an event with the right actor.
+
+## Live updates
+
+The daemon pushes an SSE stream at `/events/stream`. The web page re-renders on it and falls back to five-second polling; the console keeps its board, detail pane and activity view current the same way. Agents keep using plain HTTP (`GET /cards`, `GET /events?since=…`) — no streaming required.
 
 ## Where the state lives
 
@@ -56,11 +70,20 @@ uv run agentboard.py serve --repo . --base main --remote origin --port 4300
 
 | Document | What's in it |
 | --- | --- |
-| [docs/getting-started.md](docs/getting-started.md) | First board, first cards, first agent |
-| [docs/workflow.md](docs/workflow.md) | States, who moves what, review and merge |
-| [docs/api.md](docs/api.md) | Every endpoint, formats, errors, importing cards |
+| [docs/getting-started.md](docs/getting-started.md) | First board, first cards, first agent, first console |
+| [docs/workflow.md](docs/workflow.md) | States, who moves what, review and merge, the operator console |
+| [docs/api.md](docs/api.md) | Every endpoint, formats, errors, live stream, importing cards |
 | [docs/data-model.md](docs/data-model.md) | SQLite schema, triggers, permanence |
-| [docs/architecture.md](docs/architecture.md) | How the single file is built; testing |
+| [docs/architecture.md](docs/architecture.md) | How the daemon and console are built; testing |
 | [docs/adopting.md](docs/adopting.md) | Using it in a real repo |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Errors and fixes, FAQ |
-| [docs/spec.md](docs/spec.md) | The product spec and its acceptance criteria |
+| [docs/spec.md](docs/spec.md) | The original v1 product spec |
+
+## Development
+
+```
+uv run agentboard.py selftest        # 19 daemon tests
+uv run agentboard-tui.py --selftest  # console checks, headless
+```
+
+CI runs both on Ubuntu, macOS and Windows. Every test builds its own temporary git repositories and servers; nothing in your working tree or git config is touched.

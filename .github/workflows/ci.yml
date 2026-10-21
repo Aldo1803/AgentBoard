@@ -17,3 +17,4 @@ jobs:
         with:
           cache-dependency-glob: agentboard.py
       - run: uv run agentboard.py selftest
+      - run: uv run agentboard-tui.py --selftest

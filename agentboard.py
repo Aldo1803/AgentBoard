@@ -16,6 +16,7 @@ Agents start at GET /agent; people look at /.
 import argparse
 import ast
 import contextlib
+import http.client
 import json
 import re
 import shlex
@@ -458,6 +459,16 @@ class Store:
         try:
             rows = conn.execute(
                 "SELECT * FROM events WHERE id > ? ORDER BY id ASC", (since,)
+            ).fetchall()
+            return [self._event_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def recent_events(self, limit=15):
+        conn = self.connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             return [self._event_dict(r) for r in rows]
         finally:
@@ -1304,6 +1315,7 @@ def render_agent_page(app):
         "## Endpoints (plain text by default; add ?format=json or Accept: application/json)",
         f"- GET  {base_url}/cards?status=ready     ready cards, one line each (no status: every card)",
         f"- GET  {base_url}/cards/{{id}}            one full card: body, scope, deps, events",
+        f"- GET  {base_url}/board                  counts, sync facts and every card (JSON with ?format=json)",
         f"- POST {base_url}/cards/{{id}}/claim      body: agent=<your name>",
         f"- POST {base_url}/cards/{{id}}/report     body: pr=<PR URL>, note=<optional>",
         f"- POST {base_url}/cards/{{id}}/block      body: reason=<why>",
@@ -1408,6 +1420,30 @@ def render_status(app):
     return "\n".join(lines) + "\n"
 
 
+def board_snapshot(app):
+    base_head = None
+    raw_head = app.store.get_meta("base_head")
+    if raw_head:
+        try:
+            base_head = json.loads(raw_head)
+        except ValueError:
+            base_head = None
+    cards = app.board.list_cards(None)
+    counts = {key: 0 for key, _ in COLUMNS}
+    for card in cards:
+        counts[card["state"]] += 1
+    return {
+        "repo": str(app.git.repo),
+        "repo_name": app.git.repo.name,
+        "base": f"{app.git.remote}/{app.git.base}",
+        "last_sync_at": app.store.get_meta("last_sync_at"),
+        "base_head": base_head,
+        "counts": counts,
+        "max_event_id": app.store.max_event_id(),
+        "cards": cards,
+    }
+
+
 PAGE_CSS = """
 :root {
   --bg: #f6f7f9; --fg: #1c1e21; --card: #ffffff; --muted: #667085;
@@ -1431,6 +1467,22 @@ header.top h1 a { color: var(--fg); }
 .counts span { margin-right: 12px; color: var(--muted); }
 .counts b { color: var(--fg); }
 .sync { color: var(--muted); font-size: 12px; }
+.agents { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.agents .label { text-transform: uppercase; letter-spacing: .6px; font-size: 11px; margin-right: 6px; }
+.agents .agent { margin-right: 14px; }
+.agents .agent b { color: var(--fg); font-weight: 600; }
+.agents .mini { color: var(--muted); }
+.agents .none { color: var(--muted); font-style: italic; }
+.activity { max-width: 980px; margin: 4px 12px 24px; padding: 10px 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.activity h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+.activity h2 .n { color: var(--fg); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.activity ul { list-style: none; margin: 0; padding: 0; }
+.activity li { font-size: 12px; color: var(--muted); padding: 2px 0; }
+.activity li b { color: var(--fg); font-weight: 600; }
+.activity li a { color: var(--accent); }
+.activity .mini { color: var(--muted); }
 .cols { display: flex; gap: 12px; align-items: flex-start; padding: 12px; overflow-x: auto; }
 .col { flex: 1 1 0; min-width: 210px; }
 .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
@@ -1467,6 +1519,10 @@ code { font-family: ui-monospace, Consolas, "Courier New", monospace; font-size:
 
 PAGE_JS = """
 (function () {
+  var pollTimer = null;
+  var refreshTimer = null;
+  var stream = null;
+
   function rel(ms) {
     var s = Math.max(0, Math.floor(ms / 1000));
     if (s < 60) return s + "s ago";
@@ -1486,7 +1542,8 @@ PAGE_JS = """
       el.hidden = !(t && Date.now() >= t);
     });
   }
-  function tick() {
+  function refresh() {
+    refreshTimer = null;
     updateTimes();
     updateStale();
     fetch(location.pathname + location.search, { cache: "no-store" })
@@ -1515,9 +1572,36 @@ PAGE_JS = """
       })
       .catch(function () {});
   }
+  function schedule() {
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(refresh, 150);
+  }
+  function startPolling() {
+    if (!pollTimer) pollTimer = setInterval(refresh, 5000);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  function connect() {
+    if (!window.EventSource) { startPolling(); return; }
+    try {
+      stream = new EventSource("/events/stream");
+    } catch (e) {
+      startPolling();
+      return;
+    }
+    stream.addEventListener("snapshot", function () { stopPolling(); schedule(); });
+    stream.addEventListener("event", function () { schedule(); });
+    stream.onerror = function () {
+      if (stream) { stream.close(); stream = null; }
+      startPolling();
+      setTimeout(connect, 5000);
+    };
+  }
   updateTimes();
   updateStale();
-  setInterval(tick, 5000);
+  startPolling();
+  connect();
 })();
 """
 
@@ -1558,7 +1642,34 @@ def board_rev(app):
     return f"{app.store.max_event_id()}-{sha[:12]}"
 
 
-def headline_html(app, counts):
+def agents_html(cards):
+    groups = {}
+    for card in cards:
+        if card["state"] in ("claimed", "in_review") and card["agent"]:
+            groups.setdefault(card["agent"], []).append(card)
+    if not groups:
+        return (
+            '<div class="agents"><span class="label">Agents</span> '
+            '<span class="none">(none holding a card)</span></div>'
+        )
+    parts = []
+    for agent in sorted(groups, key=lambda name: str(name).lower()):
+        bits = []
+        for card in groups[agent]:
+            bit = f'<a href="/view/{esc(card["id"])}">{esc(card["id"])}</a>'
+            if card["state"] == "claimed":
+                bit += f' <span class="mini">claimed {time_html(card["last_event_at"])}</span>'
+                if card["stale"]:
+                    after = add_seconds(card["last_event_at"], STALE_SECONDS)
+                    bit += f'<span class="stale" data-after="{esc(after)}">stale</span>'
+            else:
+                bit += ' <span class="mini">in review</span>'
+            bits.append(bit)
+        parts.append(f'<span class="agent"><b>{esc(agent)}</b> ' + " | ".join(bits) + "</span>")
+    return '<div class="agents"><span class="label">Agents</span> ' + "  ".join(parts) + "</div>"
+
+
+def headline_html(app, counts, cards):
     counts_html = "".join(
         f"<span>{esc(label)} <b>{counts[key]}</b></span>" for key, label in COLUMNS
     )
@@ -1577,7 +1688,11 @@ def headline_html(app, counts):
             bits.append(
                 f'{esc(app.git.remote)}/{esc(app.git.base)} @ <code>{sha}</code> "{subject}"'
             )
-    return f'<div class="counts">{counts_html}</div><div class="sync">{" | ".join(bits)}</div>'
+    return (
+        f'<div class="counts">{counts_html}</div>'
+        f'<div class="sync">{" | ".join(bits)}</div>'
+        + agents_html(cards)
+    )
 
 
 def meta_line_html(summary):
@@ -1635,11 +1750,45 @@ def column_html(key, label, cards):
     )
 
 
+def activity_html(store):
+    events = store.recent_events(14)
+    if not events:
+        return '<section class="activity"><h2>Recent activity</h2><div class="empty">(none)</div></section>'
+    groups = []
+    for event in events:
+        key = (event["card_id"], event["actor"], event["kind"])
+        if groups and groups[-1]["key"] == key:
+            groups[-1]["count"] += 1
+            continue
+        groups.append({"key": key, "event": event, "count": 1})
+    items = []
+    for group in groups:
+        event = group["event"]
+        if event["card_id"]:
+            card = f'<a href="/view/{esc(event["card_id"])}">{esc(event["card_id"])}</a>'
+        else:
+            card = "board"
+        extra = ""
+        if event["kind"] == "merged" and (event["detail"] or {}).get("manual"):
+            extra = ' <span class="mini">manual</span>'
+        count = f' <span class="mini">x{group["count"]}</span>' if group["count"] > 1 else ""
+        items.append(
+            f'<li>{time_html(event["at"])} | <b>{esc(event["actor"])}</b> '
+            f'{esc(event["kind"])} {card}{count}{extra}</li>'
+        )
+    return (
+        '<section class="activity"><h2>Recent activity '
+        f'<span class="n">last {len(events)}</span></h2><ul>'
+        + "".join(items)
+        + "</ul></section>"
+    )
+
+
 def render_board_html(app):
+    cards = app.board.list_cards(None)
     groups = {key: [] for key, _ in COLUMNS}
-    for row in app.store.all_rows():
-        summary = card_summary(app.store, row)
-        groups[summary["state"]].append(summary)
+    for card in cards:
+        groups[card["state"]].append(card)
     counts = {key: len(groups[key]) for key, _ in COLUMNS}
     columns = "\n".join(
         column_html(key, label, groups[key]) for key, label in COLUMNS
@@ -1647,8 +1796,8 @@ def render_board_html(app):
     return page_shell(
         f"AgentBoard - {app.git.repo.name}",
         board_rev(app),
-        headline_html(app, counts),
-        f'<div class="cols">{columns}</div>',
+        headline_html(app, counts, cards),
+        f'<div class="cols">{columns}</div>' + activity_html(app.store),
     )
 
 
@@ -1894,6 +2043,45 @@ class BoardHTTP(BaseHTTPRequestHandler):
     def respond_error(self, exc):
         self.respond(exc.status, exc.message + "\n", {"error": exc.message})
 
+    def write_sse(self, event_name, data):
+        payload = json.dumps(data, ensure_ascii=False)
+        chunk = f"event: {event_name}\ndata: {payload}\n\n".encode("utf-8")
+        self.wfile.write(chunk)
+        self.wfile.flush()
+
+    def stream_events(self):
+        app = self.app
+        since_raw = self.param("since") or "0"
+        last_id = int(since_raw) if since_raw.isdigit() else 0
+        self.close_connection = True
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"retry: 2000\n\n")
+            snapshot = board_snapshot(app)
+            last_id = max(last_id, snapshot["max_event_id"])
+            self.write_sse("snapshot", snapshot)
+            idle = 0
+            while True:
+                events = app.store.events_since(last_id)
+                if events:
+                    for event in events:
+                        self.write_sse("event", event)
+                        last_id = max(last_id, event["id"])
+                    idle = 0
+                else:
+                    idle += 1
+                    if idle >= 15:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                        idle = 0
+                time.sleep(1)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
     def route_get(self, path):
         app = self.app
         if path == "/":
@@ -1913,6 +2101,10 @@ class BoardHTTP(BaseHTTPRequestHandler):
         if path == "/cards":
             cards = app.board.list_cards(self.param("status"))
             return self.respond(200, render_cards_text(cards), {"cards": cards})
+        if path == "/board":
+            return self.respond(200, render_status(app), board_snapshot(app))
+        if path == "/events/stream":
+            return self.stream_events()
         match = re.fullmatch(r"/cards/([^/]+)", path)
         if match:
             card_id = urllib.parse.unquote(match.group(1))
@@ -2617,6 +2809,54 @@ def t18_merge_detected_after_rewrite_elsewhere():
         gitx(["push", "origin", "--delete", "card/FP-01"], env.seed)
         code, data = env.json("POST", "/sync")
         assert code == 200 and data["newly_done"] == ["FP-01"], (code, data)
+
+
+def read_sse_event(resp):
+    fields = {}
+    while True:
+        raw = resp.readline()
+        if not raw:
+            raise AssertionError("the event stream closed unexpectedly")
+        line = raw.decode("utf-8").rstrip("\r\n")
+        if not line:
+            if fields.get("event"):
+                return fields
+            fields = {}
+            continue
+        if line.startswith(":"):
+            continue
+        if ":" in line:
+            key, value = line.split(":", 1)
+            fields[key] = value.lstrip()
+
+
+@selftest
+def t19_board_snapshot_and_sse():
+    with temp_env() as env:
+        import_cards(env, [{"id": "SSE-01", "title": "stream"}])
+        code, data = env.json("GET", "/board")
+        assert code == 200, data
+        assert data["base"] == "origin/main", data
+        assert [c["id"] for c in data["cards"]] == ["SSE-01"], data
+        assert data["counts"]["ready"] == 1, data
+        conn = http.client.HTTPConnection("127.0.0.1", env.app.port, timeout=15)
+        try:
+            conn.request("GET", "/events/stream")
+            resp = conn.getresponse()
+            assert resp.status == 200
+            assert "text/event-stream" in (resp.getheader("Content-Type") or "")
+            first = read_sse_event(resp)
+            assert first["event"] == "snapshot", first
+            snapshot = json.loads(first["data"])
+            assert snapshot["cards"][0]["id"] == "SSE-01", snapshot
+            code, _ = env.json("POST", "/cards/SSE-01/claim", data={"agent": "tester"})
+            assert code == 200
+            second = read_sse_event(resp)
+            assert second["event"] == "event", second
+            event = json.loads(second["data"])
+            assert event["kind"] == "claimed" and event["actor"] == "tester", event
+        finally:
+            conn.close()
 
 
 def run_selftest():

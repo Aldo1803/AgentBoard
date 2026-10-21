@@ -58,13 +58,30 @@ No — that is the design. Imports never change done cards; they are listed so y
 ## The page
 
 **The board does not refresh fast enough for me.**
-It refreshes within 5 seconds. Without JavaScript, a `<noscript>` meta refresh does the same.
+Changes arrive over the SSE stream within about a second; if the stream cannot connect, the page falls back to refreshing every 5 seconds (and a `<noscript>` meta refresh does the same without JavaScript).
 
 **Can I edit cards from the page?**
-No. The UI is read-only by design: people look, agents act through the API. Telling an agent "block IDN-02 with reason X" is the intended path.
+No. The web page is read-only by design: it reports, it never operates. Use the console for actions, or tell an agent what to do.
 
 **I see `[agentboard]` lines on the console.**
 Those are non-200 responses being logged to stderr. Normal traffic is silent.
+
+## The console (`agentboard-tui.py`)
+
+**It says "offline" and never loads.**
+The console is a client: start the daemon first (`uv run agentboard.py serve`) and leave it running. If the board is on another port, pass `--url http://127.0.0.1:PORT`. The bar retries by itself.
+
+**The layout looks broken, boxes are missing, or keys behave oddly.**
+Use Windows Terminal (or any modern VT-capable terminal); legacy conhost lacks the fonts and escape support Textual needs. PowerShell 5.1 as the shell is fine — it is the host window that matters.
+
+**An action is refused with a 409.**
+The board is right: the card moved (someone else claimed it, it is blocked, or a dependency is not done). Press `r` to refresh; the detail pane shows the current state and the message says what to do next.
+
+**Does the console run agents or change git?**
+No. It calls the same HTTP endpoints an agent would, records the same events, and shows the same worktree commands. Nothing else.
+
+**How do I check the console without opening it?**
+`uv run agentboard-tui.py --selftest` drives the widgets headlessly against a stub board; add `--url http://127.0.0.1:4300` to check against a live one.
 
 ## PowerShell and Windows
 

@@ -21,7 +21,8 @@ The board owns the card states. Agents move a card only by claiming, reporting, 
 
 ```
 todo (waiting) --> todo (ready)          derived: the last dependency reached done
-todo (ready)   --> claimed               agent: POST /cards/{id}/claim
+todo (ready)   --> claimed               agent, or a person claiming for an agent:
+                                         POST /cards/{id}/claim (console)
 claimed        --> in_review             agent: POST /cards/{id}/report   (board checks git first)
 in_review      --> done                  board: merge commit detected on sync
 in_review      --> done                  person: POST /cards/{id}/merged  (squash merges)
@@ -30,7 +31,7 @@ blocked        --> todo (ready)          person: POST /cards/{id}/unblock (with 
 claimed        --> todo (ready)          agent or person: POST /cards/{id}/release
 ```
 
-`done` is terminal. The database itself refuses to change or delete a done card, whatever route asks — API, re-import, or a direct `UPDATE` in SQLite.
+The console performs the person's routes as `person` (release, unblock, merged) or with the agent name the person enters (claim). `done` is terminal. The database itself refuses to change or delete a done card, whatever route asks — API, re-import, or a direct `UPDATE` in SQLite.
 
 ## The rules behind the transitions
 
@@ -51,7 +52,25 @@ Otherwise the card stays **Claimed** and the reply names the missing fact (and t
 
 **Blocked and released.** An agent may block its card with a reason, or release it. Both keep the worktree and branch, so work is not lost. Only `unblock`, carrying a person's note, returns a blocked card to ready. Releasing clears the holder; the branch name stays on the card and the branch stays in git.
 
-**Stale claims.** A claim with no event for 4 hours is marked *stale* on the page and on `/agent`. Nothing else happens: no release, no reassignment, no notification. When you notice one, talk to the person or agent, or release the card yourself (through an agent). The stale marker is a signpost, not a timeout.
+**Stale claims.** A claim with no event for 4 hours is marked *stale* on the page, on `/agent` and in the console. Nothing else happens: no release, no reassignment, no notification. When you notice one, talk to the person or agent, release the card from the console, or ask an agent to release it. The stale marker is a signpost, not a timeout.
+
+## The console
+
+`uv run agentboard-tui.py` (a second terminal, with the daemon running) is the operator's surface. It shows the board as a live table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab of agents and recent events. The daemon pushes updates over SSE, so the view follows claims, blocks and merges without refreshing.
+
+Keys: `j`/`k` or arrows to move, `/` or `f` to filter, `g` to cycle the state filter, `1`/`2` for Board/Activity, `?` for help, `q` to quit.
+
+Actions are deliberately narrow, and each one is a normal API call with a confirmation or a note:
+
+| Action | From | Recorded as |
+| --- | --- | --- |
+| Claim for an agent | Ready | the agent name you enter; the worktree commands are shown for you to hand over |
+| Release | Claimed | `person` (or the agent name, if you pass one) |
+| Unblock | Blocked | `person`, with your note |
+| Mark merged | In review | `person`, with your note |
+| Sync now | anywhere (`s`) | the board's merge detector |
+
+The web page stays read-only. The console never runs an agent and never touches git: it is the same middleware, with a keyboard.
 
 ## A day with the board
 
@@ -59,14 +78,14 @@ Otherwise the card stays **Claimed** and the reply names the missing fact (and t
 2. **Load or refresh the cards.** Tell an agent: "Read `http://127.0.0.1:4300/agent`, then import the cards in `docs/modules/*.md`." Re-running the import after specs change is safe and expected.
 3. **Start as many agents as you want**, each with the address and a card: "take card IDN-02" or "take the next ready card".
 4. **Let each agent plan first.** The go-ahead step is social, not technical — the board does not care — but it is where you set the card, split it, or redirect it.
-5. **Watch the board** (`http://127.0.0.1:4300/`). Claimed cards show who holds them and for how long; blocked cards show why.
+5. **Watch, from the browser or the console.** Claimed cards show who holds them and for how long; blocked cards show why; the Activity tab says who has been doing what.
 6. **Review and merge.** Ask your reviewer-of-choice for the PR review; you merge on GitHub.
 7. **The board closes the loop.** The next sync marks merged cards done; waiting cards become ready, in the order they were imported.
 
 ## Why it is built this way
 
 - **Agents are the users.** Every endpoint answers in plain text an agent can act on, with JSON on request. The `/agent` page is a complete brief: a person only hands over the address and a card id.
-- **People look; they don't operate.** The UI is read-only. Cards change through the API — usually by asking an agent to change them.
+- **The web page reports; the console operates.** The browser view is read-only by design. The terminal console is where a person acts on the board's terms — claim for a named agent, release, unblock with a note, confirm a squash merge, sync — and every one of those is an event with the right actor. Nothing is ever done silently.
 - **No agent runtime.** The board never starts, prompts or watches an agent. Anything with a shell and HTTP can use it.
 - **Delegation only, no project config.** The board hands out a structured, agent-readable card and records what happens. It never runs a project's commands — agents follow the repo's own guardrails (`AGENTS.md`, hooks, CI).
 - **Nothing changes by itself.** Apart from detecting merges and syncing the base branch, every change traces to an agent, a person, or the merge detector — and every one of those is an event with an actor and a time.

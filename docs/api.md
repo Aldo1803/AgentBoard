@@ -24,6 +24,8 @@ Agents use the board over HTTP at `http://127.0.0.1:4300`. Everything is plain t
 | `GET /agent` | Any agent, first | The rules, ready cards, claimed cards, copy-paste examples |
 | `GET /cards?status=…` | Agent | Cards one line each: id, title, group, state, holder, waits |
 | `GET /cards/{id}` | Agent | The full card: body, scope, dependencies, branch, PR, recent events |
+| `GET /board` | Console, agents | One snapshot: counts, sync facts and every card |
+| `GET /events/stream` | Web page, console | Server-Sent Events: snapshot, then each change as it happens |
 | `POST /cards/{id}/claim` | Agent | Records the claim; returns the branch and worktree commands |
 | `POST /cards/{id}/report` | Agent | Checks git facts; moves the card to In review |
 | `POST /cards/{id}/block` | Agent | Moves a claimed card to blocked with a reason |
@@ -101,6 +103,32 @@ events (newest first):
 JSON mode returns the detail object directly (summary fields plus `body`, `scope` as a list, and `events`).
 
 Unknown cards: `404 No card IDN-99. GET /cards lists every card; check the id.`
+
+## GET /board
+
+One call for the whole board: the `status` summary line and sync facts, counts per column, and every card. The console refreshes from it, and it is the payload of the stream's first event.
+
+```
+AgentBoard - repo: /path/to/repo   base: origin/main
+Waiting 3 | Ready 5 | Claimed 2 | In review 1 | Blocked 1 | Done 12
+last sync 2m ago | origin/main @ ab12cd3 "Merge pull request #12"
+...
+```
+
+JSON mode:
+
+```json
+{
+  "repo": "/path/to/repo",
+  "repo_name": "repo",
+  "base": "origin/main",
+  "last_sync_at": "2026-10-15T03:30:34Z",
+  "base_head": { "sha": "ab12cd3", "when": "2026-10-15T03:00:00Z", "subject": "Merge pull request #12" },
+  "counts": { "waiting": 3, "ready": 5, "claimed": 2, "in_review": 1, "blocked": 1, "done": 12 },
+  "max_event_id": 97,
+  "cards": [ { "id": "IDN-02", "state": "ready", … } ]
+}
+```
 
 ## POST /cards/{id}/claim
 
@@ -229,6 +257,19 @@ The append-only log, oldest first.
 ```
 
 `?since=12` returns only events with a higher id — useful for polling. JSON mode: `{"events": [{"id", "card_id", "at", "actor", "kind", "detail"}]}` where `detail` is an object.
+
+## GET /events/stream
+
+The live feed, as Server-Sent Events. The web page and the console subscribe; agents keep using `GET /events?since=`.
+
+- It opens with `event: snapshot`, whose data is the `GET /board` payload — everything a fresh client needs in one message.
+- Then one `event: event` per new event, data identical to a `GET /events` entry.
+- `retry: 2000` is sent at the start; a `: ping` comment every 15 seconds keeps the connection warm; `?since=<id>` asks for a cursor.
+- The connection stays open until the client leaves. Nothing is written by this route.
+
+```
+curl.exe -s -N http://127.0.0.1:4300/events/stream
+```
 
 Event kinds and their actors:
 
