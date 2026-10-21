@@ -630,9 +630,11 @@ class BoardApp(App):
 
     def action_show_board(self):
         self.query_one(TabbedContent).active = "tab-board"
+        self.call_after_refresh(self.query_one("#cards", DataTable).focus)
 
     def action_show_activity(self):
         self.query_one(TabbedContent).active = "tab-activity"
+        self.call_after_refresh(self.query_one("#agents", DataTable).focus)
 
     def action_focus_filter(self):
         box = self.query_one("#filter", Input)
@@ -914,6 +916,15 @@ async def _check(app, expected=None):
         app.rebuild_cards()
         await pilot.pause(0.2)
         assert table.row_count == before, "clearing the filter did not restore the cards"
+        from textual.widgets import TabbedContent
+
+        tabs = app.query_one(TabbedContent)
+        await pilot.press("2")
+        await pilot.pause(0.3)
+        assert tabs.active == "tab-activity", f"pressing 2 left {tabs.active} active"
+        await pilot.press("1")
+        await pilot.pause(0.3)
+        assert tabs.active == "tab-board", f"pressing 1 left {tabs.active} active"
 
 
 def run_selftest(url=None):
