@@ -39,7 +39,7 @@ Without a subcommand the CLI serves (`board`, or `board --repo …`); `board tui
 | SSE | `GET /events/stream`: a snapshot event, then event entries; one poll loop per connection, 15-second heartbeat |
 | `BoardHTTP` | the threaded HTTP server: routing, content negotiation, body parsing, error formatting |
 | CLI | `serve`, `status`, `selftest` and the flags |
-| Selftest | 20 tests, temp repositories, ephemeral ports |
+| Selftest | 21 tests, temp repositories, ephemeral ports |
 
 ## Request lifecycle
 
@@ -57,6 +57,8 @@ Without a subcommand the CLI serves (`board`, or `board --repo …`); `board tui
 `agentboard-tui.py` is a Textual application and a pure client of the daemon. Every read is `GET /board`, `GET /cards/{id}` or `GET /events`; the live feed is `/events/stream`; every action is one of the daemon's existing POST routes. It stores nothing, runs no git, and writes no files — the daemon stays the single source of truth, the same pattern as OpenCode's TUI talking to its own server.
 
 The layout is a board table (state, id, title, holder, age) beside a detail pane (facts, body, dependencies, events), plus an Activity tab listing agents and their recent events. Textual provides the CSS layout, keybindings and a footer of live hints; the console adds `/` or `f` filtering, `g` state cycling, `a` confirmed actions, `s` sync on a worker thread, and `?` help. Actions are deliberately narrow and all recorded: claim for a named agent, release, unblock with a note, mark merged, sync. The headless test (`uv run agentboard-tui.py --selftest`) drives the real widgets against a stub board — and against a live one when given `--url`.
+
+`board tui` resolves its URL from the folder it runs in: at startup the daemon writes `.git/agentboard/board.json` (`url`, `port`, `pid`, `repo`, `at`) and removes it on shutdown. The console uses that URL when it answers `/board` and reports the same repo; otherwise it falls back to `http://127.0.0.1:4300`. A stale file from a crashed daemon — or a port that now serves a different repo — is simply ignored, because reachability and the reported repo are part of the check.
 
 ## The sync loop
 
@@ -107,6 +109,7 @@ The built-in tests cover the acceptance criteria from the original [spec.md](spe
 | `t18_merge_detected_after_rewrite_elsewhere` | a branch rewritten from another clone while in review, then merged and deleted, is still detected |
 | `t19_board_snapshot_and_sse` | `GET /board` returns counts, facts and cards; `/events/stream` opens with a snapshot and then pushes each new event |
 | `t20_default_repo_is_the_current_folder` | without `--repo`, the board resolves the git root of the folder it runs from, including a nested subfolder |
+| `t21_board_registry_and_discovery` | the daemon records its port for `board tui`; discovery follows a live record, ignores a stale one, and falls back to the default port |
 
 CI runs `uv run agentboard.py selftest` and `uv run agentboard-tui.py --selftest` on Ubuntu, macOS and Windows (`.github/workflows/ci.yml`), which is where the "same on every OS" claim is kept honest. The console test runs Textual headless, so it needs no terminal; the daemon suite takes on the order of a minute, mostly git worktree setup.
 

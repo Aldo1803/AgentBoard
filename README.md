@@ -31,7 +31,7 @@ board tui                                # console, second terminal
 
 `uv tool install` puts `board` and `agentboard` in uv's tool bin directory. If the command is not found, run `uv tool update-shell` once and reopen the terminal. The install is editable, so pulling changes is enough — no reinstall.
 
-No `--repo`? The board serves the git repository containing the folder you run it from — including when you are in a subfolder. `board` with no subcommand is `serve`; `board --repo PATH` is the same as `board serve --repo PATH`. Without the install, everything still runs from the checkout with `uv run agentboard.py …` and `uv run agentboard-tui.py …`.
+No `--repo`? The board serves the git repository containing the folder you run it from — including when you are in a subfolder. `board` with no subcommand is `serve`; `board --repo PATH` is the same as `board serve --repo PATH`. `board tui` likewise opens the board running for the current folder (the daemon records its port in `.git/agentboard/board.json`); pass `--url` to point it elsewhere. Without the install, everything still runs from the checkout with `uv run agentboard.py …` and `uv run agentboard-tui.py …`.
 
 ## The idea in six lines
 
@@ -96,7 +96,7 @@ The daemon pushes an SSE stream at `/events/stream`. The web page re-renders on 
 ## Development
 
 ```
-uv run agentboard.py selftest        # 20 daemon tests
+uv run agentboard.py selftest        # 21 daemon tests
 uv run agentboard-tui.py --selftest  # console checks, headless
 ```
 

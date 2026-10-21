@@ -2,6 +2,8 @@
 
 State lives in one SQLite file inside the repo's git folder: `.git/agentboard/board.sqlite3` (plus the standard `-wal` and `-shm` companions while the board runs). Every worktree of the clone shares it — the path comes from `git rev-parse --git-common-dir` — and because it sits inside `.git`, it can never be committed by accident.
 
+Alongside it, while a board is running, `.git/agentboard/board.json` records the port, pid and repo so `board tui` can find the board for the folder. It is transient, holds no card state, and is ignored when stale.
+
 There is no project config file. The few settings are command-line flags: `--repo`, `--base`, `--remote`, `--port`.
 
 ## Tables

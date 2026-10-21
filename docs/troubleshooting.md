@@ -16,6 +16,12 @@ Keep the two scripts side by side (the wheel ships them together), or reinstall 
 **`board` started but I wanted `status`.**
 `board` with no subcommand serves. Use `board status`, or `board tui` for the console.
 
+**`board tui` says "No board is running for <repo>".**
+Start the daemon in that repo with `board`, or point the console elsewhere with `--url`. Discovery reads `.git/agentboard/board.json`, which the daemon writes while it runs; a record whose board no longer answers is ignored, and the console falls back to `http://127.0.0.1:4300`.
+
+**`board tui` opened an offline console.**
+That only happens when you pass an explicit `--url` that is not answering; without `--url`, a missing board is reported and the console exits.
+
 **The board refuses to start: `cannot be opened … malformed database schema`.**
 That SQLite file was created by an older AgentBoard whose trigger SQL current SQLite rejects. Stop the board, delete `.git/agentboard/` (the whole directory), start again, and re-import your cards — finished work sent with `"done": true` comes back done.
 

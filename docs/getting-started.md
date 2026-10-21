@@ -162,6 +162,8 @@ board tui
 
 (Without the shortcut: `uv run path/to/agentboard-tui.py`.)
 
+The console finds the board running for the folder you are in — the daemon records its port in `.git/agentboard/board.json` — so `board tui` needs no address. Pass `--url http://127.0.0.1:4301` to point it at another board. If nothing is running for this folder, it says so and stops instead of opening an empty console.
+
 The console is a client of the running daemon: a live board table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab that lists agents and what they have been doing. It follows the same live stream as the page, so claims, blocks and merges appear without refreshing.
 
 - `j`/`k` or arrows move; `/` or `f` filters; `g` cycles the state filter; `1`/`2` switch Board/Activity; `?` shows all keys.

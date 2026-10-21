@@ -1148,6 +1148,78 @@ def die(message, code=2):
     raise SystemExit(code)
 
 
+def board_snapshot_at(url, timeout=2):
+    try:
+        with urllib.request.urlopen(
+            url.rstrip("/") + "/board?format=json", timeout=timeout
+        ) as response:
+            if response.status != 200:
+                return None
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+    if isinstance(data, dict) and isinstance(data.get("cards"), list):
+        return data
+    return None
+
+
+def write_board_registry(store_dir, port, repo=None):
+    path = Path(store_dir) / "board.json"
+    payload = {
+        "url": f"http://127.0.0.1:{port}",
+        "port": port,
+        "pid": os.getpid(),
+        "repo": str(repo) if repo else None,
+        "at": now_iso(),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def remove_board_registry(path):
+    path = Path(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if data.get("pid") == os.getpid():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def discover_board_url(repo=None, fallback=None):
+    candidates = []
+    if repo is not None:
+        try:
+            git = GitFacts(repo, DEFAULT_BASE, DEFAULT_REMOTE)
+            registry = git.common_dir() / "agentboard" / "board.json"
+            data = json.loads(registry.read_text(encoding="utf-8"))
+            url = data.get("url")
+            if isinstance(url, str) and url:
+                candidates.append(url.rstrip("/"))
+        except (GitError, OSError, ValueError):
+            pass
+    if fallback:
+        candidates.append(fallback.rstrip("/"))
+    for url in candidates:
+        snapshot = board_snapshot_at(url)
+        if snapshot is None:
+            continue
+        if repo is not None:
+            served = snapshot.get("repo")
+            if served:
+                try:
+                    same = Path(str(served)).resolve() == Path(str(repo)).resolve()
+                except (OSError, ValueError):
+                    same = str(served) == str(repo)
+                if not same:
+                    continue
+        return url
+    return None
+
+
 def render_card_line(summary):
     line = f"{summary['id']}  {summary['title']}"
     if summary["group"]:
@@ -2213,6 +2285,7 @@ def cmd_serve(args):
         die(f"could not listen on 127.0.0.1:{args.port} ({exc}); pass --port with a free port")
     app.port = httpd.server_address[1]
     port = app.port
+    registry = write_board_registry(app.store.db_path.parent, port, repo=app.git.repo)
     print(f"AgentBoard on http://127.0.0.1:{port}")
     print(f"  repo: {app.git.repo}")
     print(f"  base: {app.git.remote}/{app.git.base}")
@@ -2227,6 +2300,7 @@ def cmd_serve(args):
         print(f"  initial sync failed (the board still serves): {exc}", file=sys.stderr)
     print(f"  people: http://127.0.0.1:{port}/")
     print(f"  agents: http://127.0.0.1:{port}/agent")
+    print("  console: board tui   (from the repo)")
     stop = threading.Event()
 
     def sync_loop():
@@ -2245,6 +2319,7 @@ def cmd_serve(args):
     finally:
         stop.set()
         httpd.server_close()
+        remove_board_registry(registry)
     print("\nAgentBoard stopped.")
     return 0
 
@@ -2908,6 +2983,24 @@ def t20_default_repo_is_the_current_folder():
             os.chdir(previous)
 
 
+@selftest
+def t21_board_registry_and_discovery():
+    with temp_env() as env:
+        registry_dir = env.app.store.db_path.parent
+        path = write_board_registry(registry_dir, env.app.port, repo=env.clone)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["port"] == env.app.port, data
+        assert data["url"] == f"http://127.0.0.1:{env.app.port}", data
+        url = discover_board_url(env.clone, fallback="http://127.0.0.1:9")
+        assert url == f"http://127.0.0.1:{env.app.port}", url
+        write_board_registry(registry_dir, 9, repo=env.clone)
+        assert discover_board_url(env.clone, fallback="http://127.0.0.1:9") is None
+        assert discover_board_url(env.seed, fallback=f"http://127.0.0.1:{env.app.port}") is None
+        remove_board_registry(path)
+        assert not path.exists()
+        assert discover_board_url(env.clone, fallback="http://127.0.0.1:9") is None
+
+
 def cmd_tui(args):
     script = Path(__file__).resolve().with_name("agentboard-tui.py")
     if not script.is_file():
@@ -2915,13 +3008,31 @@ def cmd_tui(args):
     uv = shutil.which("uv")
     if not uv:
         die("the console runs through uv; install uv or run agentboard-tui.py directly.")
+    url = args.url
+    if not url and not args.selftest:
+        try:
+            repo = find_repo_root(Path("."))
+        except GitError:
+            repo = None
+        url = discover_board_url(repo, fallback=f"http://127.0.0.1:{DEFAULT_PORT}")
+        if not url:
+            if repo:
+                die(
+                    f"No board is running for {repo}.\n"
+                    "Start it here with: board   (or: uv run agentboard.py serve)"
+                )
+            die(
+                f"No board is running at http://127.0.0.1:{DEFAULT_PORT}.\n"
+                "Start one in your repo with: board, or pass --url to point the console elsewhere."
+            )
+        print(f"console: {url}")
     command = [uv, "run", "--script", str(script)]
     if args.selftest:
         command.append("--selftest")
         if args.url:
             command.extend(["--url", args.url])
     else:
-        command.extend(["--url", args.url or f"http://127.0.0.1:{DEFAULT_PORT}"])
+        command.extend(["--url", url or f"http://127.0.0.1:{DEFAULT_PORT}"])
     return subprocess.call(command)
 
 
@@ -2953,7 +3064,8 @@ def main(argv=None):
             sp.add_argument(
                 "--url",
                 default=None,
-                help=f"the board's address (default: http://127.0.0.1:{DEFAULT_PORT})",
+                help="board address (default: the board running for the current folder, "
+                f"else http://127.0.0.1:{DEFAULT_PORT})",
             )
             sp.add_argument(
                 "--selftest", action="store_true", help="run the console's headless checks instead"
