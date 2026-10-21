@@ -530,6 +530,8 @@ class BoardApp(App):
 
     @on(DataTable.RowHighlighted, "#cards")
     def card_highlighted(self, event):
+        if event.row_key is None:
+            return
         key = event.row_key.value
         if key:
             self.selected_id = key
@@ -537,6 +539,8 @@ class BoardApp(App):
 
     @on(DataTable.RowHighlighted, "#agents")
     def agent_highlighted(self, event):
+        if event.row_key is None:
+            return
         key = event.row_key.value
         self.activity_agent = key
         self.render_activity()
@@ -896,6 +900,11 @@ async def _check(app, expected=None):
         assert app.selected_id, "no card selected after moving the cursor"
         assert app.detail is not None, "the detail pane did not load"
         assert app.detail["id"] == app.selected_id
+        await pilot.press("up")
+        await pilot.pause(0.2)
+        await pilot.press("up")
+        await pilot.pause(0.2)
+        assert app.selected_id, "the selection was lost after moving above the first row"
         before = table.row_count
         app.text_filter = "no-such-card-anywhere"
         app.rebuild_cards()
