@@ -39,7 +39,7 @@ Without a subcommand the CLI serves (`board`, or `board --repo …`); `board tui
 | SSE | `GET /events/stream`: a snapshot event, then event entries; one poll loop per connection, 15-second heartbeat |
 | `BoardHTTP` | the threaded HTTP server: routing, content negotiation, body parsing, error formatting |
 | CLI | `serve`, `status`, `selftest` and the flags |
-| Selftest | 19 tests, temp repositories, ephemeral ports |
+| Selftest | 20 tests, temp repositories, ephemeral ports |
 
 ## Request lifecycle
 
@@ -106,6 +106,7 @@ The built-in tests cover the acceptance criteria from the original [spec.md](spe
 | `t17_body_encodings` | Windows-1252, ISO-8859-1 and BOM-prefixed UTF-8 bodies import without losing accents |
 | `t18_merge_detected_after_rewrite_elsewhere` | a branch rewritten from another clone while in review, then merged and deleted, is still detected |
 | `t19_board_snapshot_and_sse` | `GET /board` returns counts, facts and cards; `/events/stream` opens with a snapshot and then pushes each new event |
+| `t20_default_repo_is_the_current_folder` | without `--repo`, the board resolves the git root of the folder it runs from, including a nested subfolder |
 
 CI runs `uv run agentboard.py selftest` and `uv run agentboard-tui.py --selftest` on Ubuntu, macOS and Windows (`.github/workflows/ci.yml`), which is where the "same on every OS" claim is kept honest. The console test runs Textual headless, so it needs no terminal; the daemon suite takes on the order of a minute, mostly git worktree setup.
 

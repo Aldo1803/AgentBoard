@@ -32,6 +32,8 @@ board serve
 
 (Without the shortcut: `uv run path/to/agentboard.py serve --repo path/to/your-repo`.)
 
+`--repo` is optional: the board serves the git repository containing the folder you run it from, from any subfolder. That is also why `cd path/to/your-repo && board` needs nothing else.
+
 You should see:
 
 ```

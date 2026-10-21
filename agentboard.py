@@ -18,6 +18,7 @@ import ast
 import contextlib
 import http.client
 import json
+import os
 import re
 import shlex
 import shutil
@@ -2892,6 +2893,21 @@ def cmd_selftest(args):
     return run_selftest()
 
 
+@selftest
+def t20_default_repo_is_the_current_folder():
+    with temp_env() as env:
+        previous = os.getcwd()
+        try:
+            os.chdir(env.clone)
+            assert find_repo_root(Path(".")) == env.clone.resolve()
+            nested = env.clone / "nested" / "deeper"
+            nested.mkdir(parents=True)
+            os.chdir(nested)
+            assert find_repo_root(Path(".")) == env.clone.resolve()
+        finally:
+            os.chdir(previous)
+
+
 def cmd_tui(args):
     script = Path(__file__).resolve().with_name("agentboard-tui.py")
     if not script.is_file():
@@ -2943,7 +2959,11 @@ def main(argv=None):
                 "--selftest", action="store_true", help="run the console's headless checks instead"
             )
         else:
-            sp.add_argument("--repo", default=".", help="the repository the board serves (default: .)")
+            sp.add_argument(
+                "--repo",
+                default=".",
+                help="the git repository to serve (default: the repo containing the current folder)",
+            )
             sp.add_argument("--base", default=DEFAULT_BASE, help=f"base branch (default: {DEFAULT_BASE})")
             sp.add_argument("--remote", default=DEFAULT_REMOTE, help=f"git remote (default: {DEFAULT_REMOTE})")
             sp.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default: {DEFAULT_PORT})")
