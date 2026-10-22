@@ -1,6 +1,6 @@
 [project]
 name = "agentboard"
-version = "1.4.0"
+version = "1.4.1"
 description = "A local-first card board between people, coding agents and git."
 readme = "README.md"
 requires-python = ">=3.12"

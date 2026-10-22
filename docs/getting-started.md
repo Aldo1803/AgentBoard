@@ -166,8 +166,7 @@ The console finds the board running for the folder you are in — the daemon rec
 
 The console is a client of the running daemon: a live board table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab that lists agents and what they have been doing. It follows the same live stream as the page, so claims, blocks and merges appear without refreshing.
 
-- `j`/`k` or arrows move; `a`/`d` go to the previous/next tab (Board, Status, Activity; `1`/`2`/`3` jump directly); `f` or `/` filters; `g` cycles the state filter; `t` shows/hides done cards; `h` shows all keys.
-- **Status** is the readable overview: one column per state — Waiting, Ready, Claimed, In review, Blocked, Done — with each card's holder and age. Done collapses to a count until you press `t`.
+- `j`/`k` or arrows move; `a`/`d` go to the previous/next tab (Board, Activity; `1`/`2` jump directly); `f` or `/` filters; `g` cycles the state filter; `t` shows/hides done cards; `h` shows all keys.
 - `Enter` on a card opens its actions: **claim for an agent** (you enter the agent's name and get the worktree commands to hand over), **release**, **unblock with a note**, **mark merged** (squash). `s` **syncs** now.
 - Done cards are hidden by default (the status bar still counts them); `t` brings them back.
 - Every action is recorded by the board — as `person`, or under the agent's name for a claim — and is visible in the event log. The console never runs an agent and never touches git.

@@ -25,7 +25,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     DataTable,
@@ -51,14 +51,6 @@ STATE_STYLE = {
     "done": "dim",
 }
 STATE_FILTERS = ["all", "ready", "waiting", "claimed", "in_review", "blocked", "done"]
-STATUS_COLUMNS = [
-    ("waiting", "Waiting"),
-    ("ready", "Ready"),
-    ("claimed", "Claimed"),
-    ("in_review", "In review"),
-    ("blocked", "Blocked"),
-    ("done", "Done"),
-]
 
 
 def ago(value):
@@ -256,8 +248,8 @@ class HelpScreen(ModalScreen[None]):
             with VerticalScroll(classes="result"):
                 yield Static(
                     "[b]j / k, arrows[/b]   move through cards\n"
-                    "[b]a / d[/b]           previous / next tab (Board, Status, Activity)\n"
-                    "[b]1 / 2 / 3[/b]       Board / Status / Activity\n"
+                    "[b]a / d[/b]           previous / next tab (Board, Activity)\n"
+                    "[b]1 / 2[/b]           Board / Activity\n"
                     "[b]enter[/b]           actions for the selected card\n"
                     "[b]f or /[/b]          filter cards (text)\n"
                     "[b]g[/b]               cycle state filter (all, ready, ...)\n"
@@ -266,11 +258,10 @@ class HelpScreen(ModalScreen[None]):
                     "[b]r[/b]               refresh from the board\n"
                     "[b]h[/b]               this help\n"
                     "[b]q[/b]               quit\n\n"
-                    "Status is an overview: one column per state, so the board\n"
-                    "reads at a glance. Actions are recorded by the board with\n"
-                    "actor 'person': claim for an agent, release, unblock, mark\n"
-                    "merged. Agents keep using the HTTP API; this console never\n"
-                    "runs an agent and never changes git.",
+                    "Actions are recorded by the board with actor 'person':\n"
+                    "claim for an agent, release, unblock, mark merged. Agents\n"
+                    "keep using the HTTP API; this console never runs an agent\n"
+                    "and never changes git.",
                     markup=True,
                 )
             yield Label("enter / esc to close", classes="dialog-hint")
@@ -325,11 +316,6 @@ class BoardApp(App):
     #activity-body { height: 1fr; padding: 0 1; }
     #agents { width: 34%; height: 1fr; }
     #activity-scroll { width: 66%; height: 1fr; padding: 0 1; border-left: solid $panel; }
-    #status-body { height: 1fr; padding: 0 1; }
-    .status-col { width: 25; min-width: 21; height: 1fr; margin: 0 1 0 0; padding: 0 1;
-                  border: round $panel; }
-    .status-head { text-style: bold; color: $text-muted; padding: 0 0 1 0; }
-    .status-cards { height: auto; }
     .dialog { width: 72; height: auto; max-height: 20; padding: 1 2; background: $panel;
               border: thick $primary; }
     .dialog.wide { width: 96; max-height: 28; }
@@ -347,19 +333,18 @@ class BoardApp(App):
         Binding("f", "focus_filter", "filter"),
         Binding("/", "focus_filter", "filter", show=False),
         Binding("g", "cycle_state", "state"),
-        Binding("a", "tab_left", "a/d tabs"),
-        Binding("d", "tab_right", "", show=False),
+        Binding("a", "tab_left", "left tab"),
+        Binding("d", "tab_right", "right tab"),
         Binding("enter", "open", "open"),
         Binding("t", "toggle_done", "done"),
         Binding("h", "help", "help"),
         Binding("1", "show_board", "board", show=False),
-        Binding("2", "show_status", "status", show=False),
-        Binding("3", "show_activity", "activity", show=False),
+        Binding("2", "show_activity", "activity", show=False),
         Binding("escape", "clear_ui", "", show=False),
     ]
 
-    TAB_IDS = ("tab-board", "tab-status", "tab-activity")
-    TAB_TABLES = {"tab-board": "#cards", "tab-status": "#status-body", "tab-activity": "#agents"}
+    TAB_IDS = ("tab-board", "tab-activity")
+    TAB_TABLES = {"tab-board": "#cards", "tab-activity": "#agents"}
 
     def __init__(self, base_url):
         super().__init__()
@@ -371,7 +356,6 @@ class BoardApp(App):
         self.state_filter = "all"
         self.text_filter = ""
         self.hide_done = True
-        self.status_preview = {}
         self.activity_agent = None
         self.online = False
         self._last_refresh = 0.0
@@ -392,12 +376,6 @@ class BoardApp(App):
                         yield Markdown(id="detail-body")
                         yield Static(id="detail-deps")
                         yield Static(id="detail-events")
-            with TabPane("Status", id="tab-status"):
-                with HorizontalScroll(id="status-body"):
-                    for key, label in STATUS_COLUMNS:
-                        with VerticalScroll(classes="status-col", id=f"status-col-{key}"):
-                            yield Static(classes="status-head", id=f"status-head-{key}")
-                            yield Static(classes="status-cards", id=f"status-cards-{key}")
             with TabPane("Activity", id="tab-activity"):
                 with Horizontal(id="activity-body"):
                     yield DataTable(id="agents")
@@ -442,7 +420,6 @@ class BoardApp(App):
         self.online = True
         self._last_refresh = time.monotonic()
         self.rebuild_cards()
-        self.rebuild_status()
         self.rebuild_agents()
         self.update_statusbar()
         self.update_detail()
@@ -530,42 +507,6 @@ class BoardApp(App):
             self.selected_id = None
             self.detail = None
             self.clear_detail()
-
-    def rebuild_status(self):
-        groups = {key: [] for key, _ in STATUS_COLUMNS}
-        for card in (self.snapshot or {}).get("cards") or []:
-            state = card["state"]
-            if state in groups:
-                groups[state].append(card)
-        preview = {}
-        for key, label in STATUS_COLUMNS:
-            entries = sorted(groups[key], key=lambda card: card.get("seq") or 0)
-            hidden = key == "done" and self.hide_done and bool(entries)
-            head = f"{label.upper()}  {len(entries)}"
-            if hidden:
-                head += "  · hidden"
-            self.query_one(f"#status-head-{key}", Static).update(head)
-            if hidden:
-                body = "[dim]hidden - t shows done[/dim]"
-            else:
-                blocks = []
-                for card in entries:
-                    style = STATE_STYLE.get(card["state"]) or "white"
-                    block = f"[{style}]{escape(card['id'])}[/]  {escape(card['title'])}"
-                    meta = ""
-                    if card["state"] == "blocked" and card.get("blocked_reason"):
-                        meta = card["blocked_reason"]
-                    elif card.get("agent") and card["state"] in ("claimed", "in_review"):
-                        meta = card["agent"]
-                    age = self.age_label(card)
-                    bits = [part for part in (meta, age) if part]
-                    if bits:
-                        block += f"\n[dim]{escape(' · '.join(bits))}[/dim]"
-                    blocks.append(block)
-                body = "\n\n".join(blocks) if blocks else "[dim](none)[/dim]"
-            self.query_one(f"#status-cards-{key}", Static).update(body)
-            preview[key] = (head, body)
-        self.status_preview = preview
 
     def rebuild_agents(self):
         table = self.query_one("#agents", DataTable)
@@ -716,9 +657,6 @@ class BoardApp(App):
     def action_show_board(self):
         self._show_tab("tab-board")
 
-    def action_show_status(self):
-        self._show_tab("tab-status")
-
     def action_show_activity(self):
         self._show_tab("tab-activity")
 
@@ -742,15 +680,12 @@ class BoardApp(App):
         tabs = self.query_one(TabbedContent)
         if tabs.active == "tab-board":
             self.action_actions()
-        elif tabs.active == "tab-status":
-            self.notify("Status is an overview; switch to Board (1) to act.")
         else:
             self.notify("Switch to Board (1) to act on a card.")
 
     def action_toggle_done(self):
         self.hide_done = not self.hide_done
         self.rebuild_cards()
-        self.rebuild_status()
         self.update_statusbar()
         self.notify("done cards hidden" if self.hide_done else "done cards shown")
 
@@ -1075,18 +1010,7 @@ async def _check(app, expected=None):
 
         await pilot.press("2")
         await pilot.pause(0.3)
-        assert tabs.active == "tab-status", f"pressing 2 left {tabs.active} active"
-        if expected is not None:
-            assert "IDN-01" in app.status_preview["ready"][1], app.status_preview["ready"]
-            assert "IDN-02" in app.status_preview["claimed"][1], app.status_preview["claimed"]
-            assert "hidden" in app.status_preview["done"][1], app.status_preview["done"]
-            await pilot.press("t")
-            await pilot.pause(0.3)
-            assert "IDN-03" in app.status_preview["done"][1], app.status_preview["done"]
-            assert table.row_count == expected + 1, "t did not reveal done cards from Status"
-            await pilot.press("t")
-            await pilot.pause(0.3)
-            assert table.row_count == expected, "t did not hide done cards from Status"
+        assert tabs.active == "tab-activity", f"pressing 2 left {tabs.active} active"
         await pilot.press("1")
         await pilot.pause(0.3)
         assert tabs.active == "tab-board", "pressing 1 did not return to the board"
@@ -1099,11 +1023,9 @@ async def _check(app, expected=None):
             assert not isinstance(app.screen, ActionScreen), "escape did not close the actions"
 
         for key, expected_tab in (
-            ("d", "tab-status"),
             ("d", "tab-activity"),
             ("d", "tab-board"),
             ("a", "tab-activity"),
-            ("a", "tab-status"),
             ("a", "tab-board"),
         ):
             await pilot.press(key)
