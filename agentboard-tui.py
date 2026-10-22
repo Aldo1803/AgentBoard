@@ -25,7 +25,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     DataTable,
@@ -51,6 +51,14 @@ STATE_STYLE = {
     "done": "dim",
 }
 STATE_FILTERS = ["all", "ready", "waiting", "claimed", "in_review", "blocked", "done"]
+STATUS_COLUMNS = [
+    ("waiting", "Waiting"),
+    ("ready", "Ready"),
+    ("claimed", "Claimed"),
+    ("in_review", "In review"),
+    ("blocked", "Blocked"),
+    ("done", "Done"),
+]
 
 
 def ago(value):
@@ -248,21 +256,21 @@ class HelpScreen(ModalScreen[None]):
             with VerticalScroll(classes="result"):
                 yield Static(
                     "[b]j / k, arrows[/b]   move through cards\n"
-                    "[b]a / d[/b]           previous / next tab (Board, Groups, Activity)\n"
-                    "[b]1 / 2 / 3[/b]       Board / Groups / Activity\n"
-                    "[b]enter[/b]           actions for the card, or open the group in Board\n"
+                    "[b]a / d[/b]           previous / next tab (Board, Status, Activity)\n"
+                    "[b]1 / 2 / 3[/b]       Board / Status / Activity\n"
+                    "[b]enter[/b]           actions for the selected card\n"
                     "[b]f or /[/b]          filter cards (text)\n"
                     "[b]g[/b]               cycle state filter (all, ready, ...)\n"
-                    "[b]H[/b]               show / hide done cards\n"
+                    "[b]t[/b]               show / hide done cards\n"
                     "[b]s[/b]               sync merges now\n"
                     "[b]r[/b]               refresh from the board\n"
                     "[b]h[/b]               this help\n"
                     "[b]q[/b]               quit\n\n"
-                    "Groups clusters cards by their group; Enter opens the selected\n"
-                    "group in Board. Actions are recorded by the board with actor\n"
-                    "'person': claim for an agent, release, unblock, mark merged.\n"
-                    "Agents keep using the HTTP API; this console never runs an\n"
-                    "agent and never changes git.",
+                    "Status is an overview: one column per state, so the board\n"
+                    "reads at a glance. Actions are recorded by the board with\n"
+                    "actor 'person': claim for an agent, release, unblock, mark\n"
+                    "merged. Agents keep using the HTTP API; this console never\n"
+                    "runs an agent and never changes git.",
                     markup=True,
                 )
             yield Label("enter / esc to close", classes="dialog-hint")
@@ -317,10 +325,11 @@ class BoardApp(App):
     #activity-body { height: 1fr; padding: 0 1; }
     #agents { width: 34%; height: 1fr; }
     #activity-scroll { width: 66%; height: 1fr; padding: 0 1; border-left: solid $panel; }
-    #groups-body { height: 1fr; padding: 0 1; }
-    #groups { width: 56%; height: 1fr; }
-    #group-detail { width: 44%; height: 1fr; padding: 0 1; border-left: solid $panel; }
-    #group-summary { margin-bottom: 1; }
+    #status-body { height: 1fr; padding: 0 1; }
+    .status-col { width: 25; min-width: 21; height: 1fr; margin: 0 1 0 0; padding: 0 1;
+                  border: round $panel; }
+    .status-head { text-style: bold; color: $text-muted; padding: 0 0 1 0; }
+    .status-cards { height: auto; }
     .dialog { width: 72; height: auto; max-height: 20; padding: 1 2; background: $panel;
               border: thick $primary; }
     .dialog.wide { width: 96; max-height: 28; }
@@ -341,16 +350,16 @@ class BoardApp(App):
         Binding("a", "tab_left", "a/d tabs"),
         Binding("d", "tab_right", "", show=False),
         Binding("enter", "open", "open"),
-        Binding("H", "toggle_done", "done"),
+        Binding("t", "toggle_done", "done"),
         Binding("h", "help", "help"),
         Binding("1", "show_board", "board", show=False),
-        Binding("2", "show_groups", "groups", show=False),
+        Binding("2", "show_status", "status", show=False),
         Binding("3", "show_activity", "activity", show=False),
         Binding("escape", "clear_ui", "", show=False),
     ]
 
-    TAB_IDS = ("tab-board", "tab-groups", "tab-activity")
-    TAB_TABLES = {"tab-board": "#cards", "tab-groups": "#groups", "tab-activity": "#agents"}
+    TAB_IDS = ("tab-board", "tab-status", "tab-activity")
+    TAB_TABLES = {"tab-board": "#cards", "tab-status": "#status-body", "tab-activity": "#agents"}
 
     def __init__(self, base_url):
         super().__init__()
@@ -359,13 +368,10 @@ class BoardApp(App):
         self.detail = None
         self.events = []
         self.selected_id = None
-        self.selected_group = None
-        self.group_names = []
-        self.groups = {}
         self.state_filter = "all"
         self.text_filter = ""
-        self.group_filter = None
         self.hide_done = True
+        self.status_preview = {}
         self.activity_agent = None
         self.online = False
         self._last_refresh = 0.0
@@ -386,12 +392,12 @@ class BoardApp(App):
                         yield Markdown(id="detail-body")
                         yield Static(id="detail-deps")
                         yield Static(id="detail-events")
-            with TabPane("Groups", id="tab-groups"):
-                with Horizontal(id="groups-body"):
-                    yield DataTable(id="groups")
-                    with VerticalScroll(id="group-detail"):
-                        yield Static(id="group-summary")
-                        yield Static(id="group-cards")
+            with TabPane("Status", id="tab-status"):
+                with HorizontalScroll(id="status-body"):
+                    for key, label in STATUS_COLUMNS:
+                        with VerticalScroll(classes="status-col", id=f"status-col-{key}"):
+                            yield Static(classes="status-head", id=f"status-head-{key}")
+                            yield Static(classes="status-cards", id=f"status-cards-{key}")
             with TabPane("Activity", id="tab-activity"):
                 with Horizontal(id="activity-body"):
                     yield DataTable(id="agents")
@@ -405,10 +411,6 @@ class BoardApp(App):
         cards.add_columns("State", "ID", "Title", "Who", "Age")
         cards.cursor_type = "row"
         cards.zebra_stripes = True
-        groups = self.query_one("#groups", DataTable)
-        groups.add_columns("Group", "Cards", "Wait", "Ready", "Claim", "Review", "Block", "Done")
-        groups.cursor_type = "row"
-        groups.zebra_stripes = True
         agents = self.query_one("#agents", DataTable)
         agents.add_columns("Agent", "Holds", "Last event", "State")
         agents.cursor_type = "row"
@@ -440,7 +442,7 @@ class BoardApp(App):
         self.online = True
         self._last_refresh = time.monotonic()
         self.rebuild_cards()
-        self.rebuild_groups()
+        self.rebuild_status()
         self.rebuild_agents()
         self.update_statusbar()
         self.update_detail()
@@ -475,11 +477,6 @@ class BoardApp(App):
         cards = (self.snapshot or {}).get("cards") or []
         if self.hide_done:
             cards = [card for card in cards if card["state"] != "done"]
-        if self.group_filter:
-            if self.group_filter == "(ungrouped)":
-                cards = [card for card in cards if not card.get("group")]
-            else:
-                cards = [card for card in cards if card.get("group") == self.group_filter]
         if self.state_filter != "all":
             cards = [card for card in cards if card["state"] == self.state_filter]
         needle = self.text_filter.strip().lower()
@@ -534,76 +531,41 @@ class BoardApp(App):
             self.detail = None
             self.clear_detail()
 
-    def rebuild_groups(self):
-        table = self.query_one("#groups", DataTable)
-        previous = self.selected_group
-        table.clear()
-        groups = {}
+    def rebuild_status(self):
+        groups = {key: [] for key, _ in STATUS_COLUMNS}
         for card in (self.snapshot or {}).get("cards") or []:
-            name = card.get("group") or "(ungrouped)"
-            groups.setdefault(name, []).append(card)
-        self.groups = groups
-        self.group_names = sorted(groups, key=lambda name: str(name).lower())
-        for name in self.group_names:
-            cards = groups[name]
-            counts = {key: 0 for key in ("waiting", "ready", "claimed", "in_review", "blocked", "done")}
-            for card in cards:
-                state = card["state"]
-                if state in counts:
-                    counts[state] += 1
-            table.add_row(
-                name,
-                str(len(cards)),
-                str(counts["waiting"]),
-                str(counts["ready"]),
-                str(counts["claimed"]),
-                str(counts["in_review"]),
-                str(counts["blocked"]),
-                str(counts["done"]),
-                key=name,
-            )
-        if previous and previous in self.group_names:
-            table.move_cursor(row=self.group_names.index(previous))
-            self.selected_group = previous
-        elif self.group_names:
-            table.move_cursor(row=0)
-            self.selected_group = self.group_names[0]
-        else:
-            self.selected_group = None
-        self.render_group_detail()
-
-    def render_group_detail(self):
-        name = self.selected_group
-        summary = self.query_one("#group-summary", Static)
-        cards_view = self.query_one("#group-cards", Static)
-        if not name:
-            summary.update("")
-            cards_view.update("")
-            return
-        cards = list(self.groups.get(name, []))
-        visible = [card for card in cards if not self.hide_done or card["state"] != "done"]
-        plural = "card" if len(cards) == 1 else "cards"
-        text = f"[b]{escape(name)}[/b] · {len(cards)} {plural}"
-        if len(visible) != len(cards):
-            text += f" · {len(cards) - len(visible)} done hidden"
-        summary.update(text)
-        lines = []
-        for card in sorted(
-            visible, key=lambda card: (STATE_ORDER.get(card["state"], 9), card.get("seq") or 0)
-        ):
-            style = STATE_STYLE.get(card["state"]) or "white"
-            line = (
-                f"[{style}]{card['state']:<9}[/] "
-                f"[b]{escape(card['id'])}[/b]  {escape(card['title'])}"
-            )
-            if card.get("agent") and card["state"] in ("claimed", "in_review"):
-                line += f"  [dim]{escape(card['agent'])}[/dim]"
-            if card["state"] == "blocked" and card.get("blocked_reason"):
-                line += f"  [dim]{escape(card['blocked_reason'])}[/dim]"
-            lines.append(line)
-        if not lines:
-            lines.append("[dim](nothing to show)[/dim]")
-        cards_view.update("\n".join(lines))
+            state = card["state"]
+            if state in groups:
+                groups[state].append(card)
+        preview = {}
+        for key, label in STATUS_COLUMNS:
+            entries = sorted(groups[key], key=lambda card: card.get("seq") or 0)
+            hidden = key == "done" and self.hide_done and bool(entries)
+            head = f"{label.upper()}  {len(entries)}"
+            if hidden:
+                head += "  · hidden"
+            self.query_one(f"#status-head-{key}", Static).update(head)
+            if hidden:
+                body = "[dim]hidden - t shows done[/dim]"
+            else:
+                blocks = []
+                for card in entries:
+                    style = STATE_STYLE.get(card["state"]) or "white"
+                    block = f"[{style}]{escape(card['id'])}[/]  {escape(card['title'])}"
+                    meta = ""
+                    if card["state"] == "blocked" and card.get("blocked_reason"):
+                        meta = card["blocked_reason"]
+                    elif card.get("agent") and card["state"] in ("claimed", "in_review"):
+                        meta = card["agent"]
+                    age = self.age_label(card)
+                    bits = [part for part in (meta, age) if part]
+                    if bits:
+                        block += f"\n[dim]{escape(' · '.join(bits))}[/dim]"
+                    blocks.append(block)
+                body = "\n\n".join(blocks) if blocks else "[dim](none)[/dim]"
+            self.query_one(f"#status-cards-{key}", Static).update(body)
+            preview[key] = (head, body)
+        self.status_preview = preview
 
     def rebuild_agents(self):
         table = self.query_one("#agents", DataTable)
@@ -653,26 +615,11 @@ class BoardApp(App):
         self.activity_agent = key
         self.render_activity()
 
-    @on(DataTable.RowHighlighted, "#groups")
-    def group_highlighted(self, event):
-        if event.row_key is None:
-            return
-        key = event.row_key.value
-        if key:
-            self.selected_group = key
-            self.render_group_detail()
-
     @on(DataTable.RowSelected, "#cards")
     def card_selected(self, event):
         if event.row_key is not None and event.row_key.value:
             self.selected_id = event.row_key.value
         self.action_actions()
-
-    @on(DataTable.RowSelected, "#groups")
-    def group_selected(self, event):
-        if event.row_key is not None and event.row_key.value:
-            self.selected_group = event.row_key.value
-        self.open_selected_group()
 
     @on(Input.Changed, "#filter")
     def filter_changed(self, event):
@@ -745,8 +692,6 @@ class BoardApp(App):
                 bits.append("done hidden")
             if self.state_filter != "all":
                 bits.append(f"state:{self.state_filter}")
-            if self.group_filter:
-                bits.append(f"group:{self.group_filter}")
             if self.text_filter:
                 bits.append(f"filter:{self.text_filter}")
             parts.append(Text("  |  ".join(bits), style="dim"))
@@ -764,15 +709,15 @@ class BoardApp(App):
 
     def _show_tab(self, tab_id):
         self.query_one(TabbedContent).active = tab_id
-        table_id = self.TAB_TABLES.get(tab_id)
-        if table_id:
-            self.call_after_refresh(lambda: self.query_one(table_id, DataTable).focus())
+        selector = self.TAB_TABLES.get(tab_id)
+        if selector:
+            self.call_after_refresh(lambda: self.query_one(selector).focus())
 
     def action_show_board(self):
         self._show_tab("tab-board")
 
-    def action_show_groups(self):
-        self._show_tab("tab-groups")
+    def action_show_status(self):
+        self._show_tab("tab-status")
 
     def action_show_activity(self):
         self._show_tab("tab-activity")
@@ -795,30 +740,17 @@ class BoardApp(App):
 
     def action_open(self):
         tabs = self.query_one(TabbedContent)
-        if tabs.active == "tab-groups":
-            self.open_selected_group()
-        elif tabs.active == "tab-board":
+        if tabs.active == "tab-board":
             self.action_actions()
+        elif tabs.active == "tab-status":
+            self.notify("Status is an overview; switch to Board (1) to act.")
         else:
-            self.notify("Switch to Board or Groups to open something.")
-
-    def open_selected_group(self):
-        if not self.selected_group:
-            return
-        cards = self.groups.get(self.selected_group, [])
-        if self.hide_done and cards and all(card["state"] == "done" for card in cards):
-            self.notify("every card in this group is done - H shows them", timeout=6)
-        self.group_filter = self.selected_group
-        self.state_filter = "all"
-        self.action_show_board()
-        self.rebuild_cards()
-        self.update_statusbar()
-        self.notify(f"group: {self.selected_group}")
+            self.notify("Switch to Board (1) to act on a card.")
 
     def action_toggle_done(self):
         self.hide_done = not self.hide_done
         self.rebuild_cards()
-        self.render_group_detail()
+        self.rebuild_status()
         self.update_statusbar()
         self.notify("done cards hidden" if self.hide_done else "done cards shown")
 
@@ -829,16 +761,10 @@ class BoardApp(App):
 
     def action_clear_ui(self):
         box = self.query_one("#filter", Input)
-        changed = False
         if box.display:
             box.value = ""
             box.display = False
             self.text_filter = ""
-            changed = True
-        if self.group_filter:
-            self.group_filter = None
-            changed = True
-        if changed:
             self.action_show_board()
             self.rebuild_cards()
             self.update_statusbar()
@@ -1118,12 +1044,12 @@ async def _check(app, expected=None):
         tabs = app.query_one(TabbedContent)
         if expected is not None:
             assert table.row_count == expected, f"expected {expected} cards, got {table.row_count}"
-            await pilot.press("H")
+            await pilot.press("t")
             await pilot.pause(0.3)
-            assert table.row_count == expected + 1, "H did not reveal done cards"
-            await pilot.press("H")
+            assert table.row_count == expected + 1, "t did not reveal done cards"
+            await pilot.press("t")
             await pilot.pause(0.3)
-            assert table.row_count == expected, "H did not hide done cards"
+            assert table.row_count == expected, "t did not hide done cards"
         else:
             assert app.online, "the console did not reach the board"
         if table.row_count:
@@ -1149,27 +1075,35 @@ async def _check(app, expected=None):
 
         await pilot.press("2")
         await pilot.pause(0.3)
-        assert tabs.active == "tab-groups", f"pressing 2 left {tabs.active} active"
-        groups = app.query_one("#groups", DataTable)
-        if groups.row_count:
-            await pilot.press("down")
-            await pilot.pause(0.2)
-            chosen = app.selected_group
+        assert tabs.active == "tab-status", f"pressing 2 left {tabs.active} active"
+        if expected is not None:
+            assert "IDN-01" in app.status_preview["ready"][1], app.status_preview["ready"]
+            assert "IDN-02" in app.status_preview["claimed"][1], app.status_preview["claimed"]
+            assert "hidden" in app.status_preview["done"][1], app.status_preview["done"]
+            await pilot.press("t")
+            await pilot.pause(0.3)
+            assert "IDN-03" in app.status_preview["done"][1], app.status_preview["done"]
+            assert table.row_count == expected + 1, "t did not reveal done cards from Status"
+            await pilot.press("t")
+            await pilot.pause(0.3)
+            assert table.row_count == expected, "t did not hide done cards from Status"
+        await pilot.press("1")
+        await pilot.pause(0.3)
+        assert tabs.active == "tab-board", "pressing 1 did not return to the board"
+        if expected is not None and table.row_count:
             await pilot.press("enter")
             await pilot.pause(0.3)
-            assert tabs.active == "tab-board", f"enter left {tabs.active} active"
-            assert app.group_filter == chosen, (app.group_filter, chosen)
-            assert table.row_count >= 1, "the group filter hid everything"
+            assert isinstance(app.screen, ActionScreen), f"enter opened {type(app.screen).__name__}"
             await pilot.press("escape")
             await pilot.pause(0.3)
-            assert app.group_filter is None, "escape did not clear the group filter"
+            assert not isinstance(app.screen, ActionScreen), "escape did not close the actions"
 
         for key, expected_tab in (
-            ("d", "tab-groups"),
+            ("d", "tab-status"),
             ("d", "tab-activity"),
             ("d", "tab-board"),
             ("a", "tab-activity"),
-            ("a", "tab-groups"),
+            ("a", "tab-status"),
             ("a", "tab-board"),
         ):
             await pilot.press(key)

@@ -56,9 +56,9 @@ Otherwise the card stays **Claimed** and the reply names the missing fact (and t
 
 ## The console
 
-`uv run agentboard-tui.py` (or `board tui`, after the shortcut install; a second terminal, with the daemon running) is the operator's surface. It shows the board as a live table beside the selected card's body, scope, dependencies, branch, PR and events; a **Groups** tab clusters the cards by `group` with per-state counts, and an **Activity** tab lists agents and recent events. The daemon pushes updates over SSE, so the view follows claims, blocks and merges without refreshing.
+`uv run agentboard-tui.py` (or `board tui`, after the shortcut install; a second terminal, with the daemon running) is the operator's surface. It shows the board as a live table beside the selected card's body, scope, dependencies, branch, PR and events; a **Status** tab shows the cards in one column per state, and an **Activity** tab lists agents and recent events. The daemon pushes updates over SSE, so the view follows claims, blocks and merges without refreshing.
 
-Keys: `j`/`k` or arrows to move, `a`/`d` for previous/next tab (Board, Groups, Activity; `1`/`2`/`3` jump directly), `Enter` to open the selected card's actions or the selected group in Board, `f` or `/` to filter, `g` to cycle the state filter, `H` to show/hide done cards (hidden by default), `h` for help, `q` to quit.
+Keys: `j`/`k` or arrows to move, `a`/`d` for previous/next tab (Board, Status, Activity; `1`/`2`/`3` jump directly), `Enter` to open the selected card's actions, `f` or `/` to filter, `g` to cycle the state filter, `t` to show/hide done cards (hidden by default), `h` for help, `q` to quit.
 
 Actions are deliberately narrow, and each one is a normal API call with a confirmation or a note:
 

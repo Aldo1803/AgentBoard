@@ -37,7 +37,7 @@ from html import escape as esc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 DEFAULT_PORT = 4300
 DEFAULT_BASE = "main"
 DEFAULT_REMOTE = "origin"
