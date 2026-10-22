@@ -166,8 +166,10 @@ The console finds the board running for the folder you are in — the daemon rec
 
 The console is a client of the running daemon: a live board table beside the selected card's body, scope, dependencies, branch, PR and events, plus an Activity tab that lists agents and what they have been doing. It follows the same live stream as the page, so claims, blocks and merges appear without refreshing.
 
-- `j`/`k` or arrows move; `/` or `f` filters; `g` cycles the state filter; `1`/`2` switch Board/Activity; `?` shows all keys.
-- `a` opens the actions for the selected card: **claim for an agent** (you enter the agent's name and get the worktree commands to hand over), **release**, **unblock with a note**, **mark merged** (squash), and `s` **syncs** now.
+- `j`/`k` or arrows move; `a`/`d` go to the previous/next tab (Board, Groups, Activity; `1`/`2`/`3` jump directly); `f` or `/` filters; `g` cycles the state filter; `H` shows/hides done cards; `h` shows all keys.
+- **Groups** clusters the cards by their `group` with per-state counts; `Enter` opens the selected group in Board, where it becomes a filter.
+- `Enter` on a card opens its actions: **claim for an agent** (you enter the agent's name and get the worktree commands to hand over), **release**, **unblock with a note**, **mark merged** (squash). `s` **syncs** now.
+- Done cards are hidden by default (the status bar still counts them); `H` brings them back.
 - Every action is recorded by the board — as `person`, or under the agent's name for a claim — and is visible in the event log. The console never runs an agent and never touches git.
 
 If the daemon is down, the status bar says offline and the console keeps retrying. Windows: run it in **Windows Terminal**, not legacy conhost.

@@ -248,18 +248,21 @@ class HelpScreen(ModalScreen[None]):
             with VerticalScroll(classes="result"):
                 yield Static(
                     "[b]j / k, arrows[/b]   move through cards\n"
-                    "[b]1 / 2[/b]           Board / Activity\n"
+                    "[b]a / d[/b]           previous / next tab (Board, Groups, Activity)\n"
+                    "[b]1 / 2 / 3[/b]       Board / Groups / Activity\n"
+                    "[b]enter[/b]           actions for the card, or open the group in Board\n"
                     "[b]f or /[/b]          filter cards (text)\n"
                     "[b]g[/b]               cycle state filter (all, ready, ...)\n"
-                    "[b]a[/b]               actions for the selected card\n"
+                    "[b]H[/b]               show / hide done cards\n"
                     "[b]s[/b]               sync merges now\n"
                     "[b]r[/b]               refresh from the board\n"
-                    "[b]?[/b]               this help\n"
+                    "[b]h[/b]               this help\n"
                     "[b]q[/b]               quit\n\n"
-                    "Actions are recorded by the board with actor 'person':\n"
-                    "claim for an agent, release, unblock, mark merged.\n"
-                    "Agents keep using the HTTP API; this console never runs\n"
-                    "an agent and never changes git.",
+                    "Groups clusters cards by their group; Enter opens the selected\n"
+                    "group in Board. Actions are recorded by the board with actor\n"
+                    "'person': claim for an agent, release, unblock, mark merged.\n"
+                    "Agents keep using the HTTP API; this console never runs an\n"
+                    "agent and never changes git.",
                     markup=True,
                 )
             yield Label("enter / esc to close", classes="dialog-hint")
@@ -314,6 +317,10 @@ class BoardApp(App):
     #activity-body { height: 1fr; padding: 0 1; }
     #agents { width: 34%; height: 1fr; }
     #activity-scroll { width: 66%; height: 1fr; padding: 0 1; border-left: solid $panel; }
+    #groups-body { height: 1fr; padding: 0 1; }
+    #groups { width: 56%; height: 1fr; }
+    #group-detail { width: 44%; height: 1fr; padding: 0 1; border-left: solid $panel; }
+    #group-summary { margin-bottom: 1; }
     .dialog { width: 72; height: auto; max-height: 20; padding: 1 2; background: $panel;
               border: thick $primary; }
     .dialog.wide { width: 96; max-height: 28; }
@@ -331,12 +338,19 @@ class BoardApp(App):
         Binding("f", "focus_filter", "filter"),
         Binding("/", "focus_filter", "filter", show=False),
         Binding("g", "cycle_state", "state"),
-        Binding("a", "actions", "actions"),
-        Binding("1", "show_board", "board"),
-        Binding("2", "show_activity", "activity"),
-        Binding("?", "help", "help"),
+        Binding("a", "tab_left", "a/d tabs"),
+        Binding("d", "tab_right", "", show=False),
+        Binding("enter", "open", "open"),
+        Binding("H", "toggle_done", "done"),
+        Binding("h", "help", "help"),
+        Binding("1", "show_board", "board", show=False),
+        Binding("2", "show_groups", "groups", show=False),
+        Binding("3", "show_activity", "activity", show=False),
         Binding("escape", "clear_ui", "", show=False),
     ]
+
+    TAB_IDS = ("tab-board", "tab-groups", "tab-activity")
+    TAB_TABLES = {"tab-board": "#cards", "tab-groups": "#groups", "tab-activity": "#agents"}
 
     def __init__(self, base_url):
         super().__init__()
@@ -345,8 +359,13 @@ class BoardApp(App):
         self.detail = None
         self.events = []
         self.selected_id = None
+        self.selected_group = None
+        self.group_names = []
+        self.groups = {}
         self.state_filter = "all"
         self.text_filter = ""
+        self.group_filter = None
+        self.hide_done = True
         self.activity_agent = None
         self.online = False
         self._last_refresh = 0.0
@@ -367,6 +386,12 @@ class BoardApp(App):
                         yield Markdown(id="detail-body")
                         yield Static(id="detail-deps")
                         yield Static(id="detail-events")
+            with TabPane("Groups", id="tab-groups"):
+                with Horizontal(id="groups-body"):
+                    yield DataTable(id="groups")
+                    with VerticalScroll(id="group-detail"):
+                        yield Static(id="group-summary")
+                        yield Static(id="group-cards")
             with TabPane("Activity", id="tab-activity"):
                 with Horizontal(id="activity-body"):
                     yield DataTable(id="agents")
@@ -380,6 +405,10 @@ class BoardApp(App):
         cards.add_columns("State", "ID", "Title", "Who", "Age")
         cards.cursor_type = "row"
         cards.zebra_stripes = True
+        groups = self.query_one("#groups", DataTable)
+        groups.add_columns("Group", "Cards", "Wait", "Ready", "Claim", "Review", "Block", "Done")
+        groups.cursor_type = "row"
+        groups.zebra_stripes = True
         agents = self.query_one("#agents", DataTable)
         agents.add_columns("Agent", "Holds", "Last event", "State")
         agents.cursor_type = "row"
@@ -411,6 +440,7 @@ class BoardApp(App):
         self.online = True
         self._last_refresh = time.monotonic()
         self.rebuild_cards()
+        self.rebuild_groups()
         self.rebuild_agents()
         self.update_statusbar()
         self.update_detail()
@@ -443,6 +473,13 @@ class BoardApp(App):
 
     def filtered_cards(self):
         cards = (self.snapshot or {}).get("cards") or []
+        if self.hide_done:
+            cards = [card for card in cards if card["state"] != "done"]
+        if self.group_filter:
+            if self.group_filter == "(ungrouped)":
+                cards = [card for card in cards if not card.get("group")]
+            else:
+                cards = [card for card in cards if card.get("group") == self.group_filter]
         if self.state_filter != "all":
             cards = [card for card in cards if card["state"] == self.state_filter]
         needle = self.text_filter.strip().lower()
@@ -497,6 +534,77 @@ class BoardApp(App):
             self.detail = None
             self.clear_detail()
 
+    def rebuild_groups(self):
+        table = self.query_one("#groups", DataTable)
+        previous = self.selected_group
+        table.clear()
+        groups = {}
+        for card in (self.snapshot or {}).get("cards") or []:
+            name = card.get("group") or "(ungrouped)"
+            groups.setdefault(name, []).append(card)
+        self.groups = groups
+        self.group_names = sorted(groups, key=lambda name: str(name).lower())
+        for name in self.group_names:
+            cards = groups[name]
+            counts = {key: 0 for key in ("waiting", "ready", "claimed", "in_review", "blocked", "done")}
+            for card in cards:
+                state = card["state"]
+                if state in counts:
+                    counts[state] += 1
+            table.add_row(
+                name,
+                str(len(cards)),
+                str(counts["waiting"]),
+                str(counts["ready"]),
+                str(counts["claimed"]),
+                str(counts["in_review"]),
+                str(counts["blocked"]),
+                str(counts["done"]),
+                key=name,
+            )
+        if previous and previous in self.group_names:
+            table.move_cursor(row=self.group_names.index(previous))
+            self.selected_group = previous
+        elif self.group_names:
+            table.move_cursor(row=0)
+            self.selected_group = self.group_names[0]
+        else:
+            self.selected_group = None
+        self.render_group_detail()
+
+    def render_group_detail(self):
+        name = self.selected_group
+        summary = self.query_one("#group-summary", Static)
+        cards_view = self.query_one("#group-cards", Static)
+        if not name:
+            summary.update("")
+            cards_view.update("")
+            return
+        cards = list(self.groups.get(name, []))
+        visible = [card for card in cards if not self.hide_done or card["state"] != "done"]
+        plural = "card" if len(cards) == 1 else "cards"
+        text = f"[b]{escape(name)}[/b] · {len(cards)} {plural}"
+        if len(visible) != len(cards):
+            text += f" · {len(cards) - len(visible)} done hidden"
+        summary.update(text)
+        lines = []
+        for card in sorted(
+            visible, key=lambda card: (STATE_ORDER.get(card["state"], 9), card.get("seq") or 0)
+        ):
+            style = STATE_STYLE.get(card["state"]) or "white"
+            line = (
+                f"[{style}]{card['state']:<9}[/] "
+                f"[b]{escape(card['id'])}[/b]  {escape(card['title'])}"
+            )
+            if card.get("agent") and card["state"] in ("claimed", "in_review"):
+                line += f"  [dim]{escape(card['agent'])}[/dim]"
+            if card["state"] == "blocked" and card.get("blocked_reason"):
+                line += f"  [dim]{escape(card['blocked_reason'])}[/dim]"
+            lines.append(line)
+        if not lines:
+            lines.append("[dim](nothing to show)[/dim]")
+        cards_view.update("\n".join(lines))
+
     def rebuild_agents(self):
         table = self.query_one("#agents", DataTable)
         previous = self.activity_agent
@@ -544,6 +652,27 @@ class BoardApp(App):
         key = event.row_key.value
         self.activity_agent = key
         self.render_activity()
+
+    @on(DataTable.RowHighlighted, "#groups")
+    def group_highlighted(self, event):
+        if event.row_key is None:
+            return
+        key = event.row_key.value
+        if key:
+            self.selected_group = key
+            self.render_group_detail()
+
+    @on(DataTable.RowSelected, "#cards")
+    def card_selected(self, event):
+        if event.row_key is not None and event.row_key.value:
+            self.selected_id = event.row_key.value
+        self.action_actions()
+
+    @on(DataTable.RowSelected, "#groups")
+    def group_selected(self, event):
+        if event.row_key is not None and event.row_key.value:
+            self.selected_group = event.row_key.value
+        self.open_selected_group()
 
     @on(Input.Changed, "#filter")
     def filter_changed(self, event):
@@ -604,15 +733,20 @@ class BoardApp(App):
             last = self.snapshot.get("last_sync_at")
             bits.append("sync " + (ago(last) if last else "never"))
             bits.append(
-                "ready {ready} · claimed {claimed} · review {in_review} · blocked {blocked}".format(
+                "ready {ready} · claimed {claimed} · review {in_review} · blocked {blocked} · done {done}".format(
                     ready=counts.get("ready", 0),
                     claimed=counts.get("claimed", 0),
                     in_review=counts.get("in_review", 0),
                     blocked=counts.get("blocked", 0),
+                    done=counts.get("done", 0),
                 )
             )
+            if self.hide_done:
+                bits.append("done hidden")
             if self.state_filter != "all":
                 bits.append(f"state:{self.state_filter}")
+            if self.group_filter:
+                bits.append(f"group:{self.group_filter}")
             if self.text_filter:
                 bits.append(f"filter:{self.text_filter}")
             parts.append(Text("  |  ".join(bits), style="dim"))
@@ -628,13 +762,65 @@ class BoardApp(App):
     def action_refresh(self):
         self.refresh_data(force=True)
 
+    def _show_tab(self, tab_id):
+        self.query_one(TabbedContent).active = tab_id
+        table_id = self.TAB_TABLES.get(tab_id)
+        if table_id:
+            self.call_after_refresh(lambda: self.query_one(table_id, DataTable).focus())
+
     def action_show_board(self):
-        self.query_one(TabbedContent).active = "tab-board"
-        self.call_after_refresh(self.query_one("#cards", DataTable).focus)
+        self._show_tab("tab-board")
+
+    def action_show_groups(self):
+        self._show_tab("tab-groups")
 
     def action_show_activity(self):
-        self.query_one(TabbedContent).active = "tab-activity"
-        self.call_after_refresh(self.query_one("#agents", DataTable).focus)
+        self._show_tab("tab-activity")
+
+    def action_tab_left(self):
+        tabs = self.query_one(TabbedContent)
+        try:
+            index = self.TAB_IDS.index(tabs.active)
+        except ValueError:
+            index = 0
+        self._show_tab(self.TAB_IDS[(index - 1) % len(self.TAB_IDS)])
+
+    def action_tab_right(self):
+        tabs = self.query_one(TabbedContent)
+        try:
+            index = self.TAB_IDS.index(tabs.active)
+        except ValueError:
+            index = 0
+        self._show_tab(self.TAB_IDS[(index + 1) % len(self.TAB_IDS)])
+
+    def action_open(self):
+        tabs = self.query_one(TabbedContent)
+        if tabs.active == "tab-groups":
+            self.open_selected_group()
+        elif tabs.active == "tab-board":
+            self.action_actions()
+        else:
+            self.notify("Switch to Board or Groups to open something.")
+
+    def open_selected_group(self):
+        if not self.selected_group:
+            return
+        cards = self.groups.get(self.selected_group, [])
+        if self.hide_done and cards and all(card["state"] == "done" for card in cards):
+            self.notify("every card in this group is done - H shows them", timeout=6)
+        self.group_filter = self.selected_group
+        self.state_filter = "all"
+        self.action_show_board()
+        self.rebuild_cards()
+        self.update_statusbar()
+        self.notify(f"group: {self.selected_group}")
+
+    def action_toggle_done(self):
+        self.hide_done = not self.hide_done
+        self.rebuild_cards()
+        self.render_group_detail()
+        self.update_statusbar()
+        self.notify("done cards hidden" if self.hide_done else "done cards shown")
 
     def action_focus_filter(self):
         box = self.query_one("#filter", Input)
@@ -643,15 +829,21 @@ class BoardApp(App):
 
     def action_clear_ui(self):
         box = self.query_one("#filter", Input)
+        changed = False
         if box.display:
             box.value = ""
             box.display = False
-            self.query_one("#cards", DataTable).focus()
+            self.text_filter = ""
+            changed = True
+        if self.group_filter:
+            self.group_filter = None
+            changed = True
+        if changed:
+            self.action_show_board()
             self.rebuild_cards()
             self.update_statusbar()
             return
-        table = self.query_one("#cards", DataTable)
-        table.focus()
+        self.query_one("#cards", DataTable).focus()
 
     def action_cycle_state(self):
         index = STATE_FILTERS.index(self.state_filter)
@@ -795,6 +987,26 @@ def _build_stub_handler():
             "depends_on": [{"id": "IDN-01", "title": "Bootstrapping", "status": "todo"}],
             "waits_on": [{"id": "IDN-01", "title": "Bootstrapping", "status": "todo"}],
         },
+        {
+            "id": "IDN-03",
+            "seq": 3,
+            "title": "Session cookies",
+            "group": "api",
+            "state": "done",
+            "status": "done",
+            "agent": None,
+            "branch": "card/IDN-03",
+            "pr": "https://example.invalid/pr/3",
+            "blocked_reason": None,
+            "stale": False,
+            "last_event_at": "2026-10-15T03:07:00Z",
+            "done_at": "2026-10-15T03:07:00Z",
+            "updated_at": "2026-10-15T03:07:00Z",
+            "created_at": "2026-10-15T03:00:00Z",
+            "source": "docs/spec.md",
+            "depends_on": [],
+            "waits_on": [],
+        },
     ]
     snapshot = {
         "repo": "/tmp/stub-repo",
@@ -802,8 +1014,8 @@ def _build_stub_handler():
         "base": "origin/main",
         "last_sync_at": "2026-10-15T03:10:00Z",
         "base_head": {"sha": "abc1234", "when": "2026-10-15T03:00:00Z", "subject": "init"},
-        "counts": {"waiting": 0, "ready": 1, "claimed": 1, "in_review": 0, "blocked": 0, "done": 0},
-        "max_event_id": 2,
+        "counts": {"waiting": 0, "ready": 1, "claimed": 1, "in_review": 0, "blocked": 0, "done": 1},
+        "max_event_id": 3,
         "cards": cards,
     }
     details = {}
@@ -838,6 +1050,14 @@ def _build_stub_handler():
             "actor": "claude-code",
             "kind": "claimed",
             "detail": {"branch": "card/IDN-02"},
+        },
+        {
+            "id": 3,
+            "card_id": "IDN-03",
+            "at": "2026-10-15T03:07:00Z",
+            "actor": "person",
+            "kind": "merged",
+            "detail": {"note": "squashed, confirmed in GitHub", "manual": True},
         },
     ]
 
@@ -892,21 +1112,31 @@ def _build_stub_handler():
 async def _check(app, expected=None):
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause(1.0)
+        from textual.widgets import TabbedContent
+
         table = app.query_one("#cards", DataTable)
-        if expected is None:
-            assert table.row_count >= 1, "the board rendered no cards"
-        else:
+        tabs = app.query_one(TabbedContent)
+        if expected is not None:
             assert table.row_count == expected, f"expected {expected} cards, got {table.row_count}"
-        await pilot.press("down")
-        await pilot.pause(0.3)
-        assert app.selected_id, "no card selected after moving the cursor"
-        assert app.detail is not None, "the detail pane did not load"
-        assert app.detail["id"] == app.selected_id
-        await pilot.press("up")
-        await pilot.pause(0.2)
-        await pilot.press("up")
-        await pilot.pause(0.2)
-        assert app.selected_id, "the selection was lost after moving above the first row"
+            await pilot.press("H")
+            await pilot.pause(0.3)
+            assert table.row_count == expected + 1, "H did not reveal done cards"
+            await pilot.press("H")
+            await pilot.pause(0.3)
+            assert table.row_count == expected, "H did not hide done cards"
+        else:
+            assert app.online, "the console did not reach the board"
+        if table.row_count:
+            await pilot.press("down")
+            await pilot.pause(0.3)
+            assert app.selected_id, "no card selected after moving the cursor"
+            assert app.detail is not None, "the detail pane did not load"
+            assert app.detail["id"] == app.selected_id
+            await pilot.press("up")
+            await pilot.pause(0.2)
+            await pilot.press("up")
+            await pilot.pause(0.2)
+            assert app.selected_id, "the selection was lost after moving above the first row"
         before = table.row_count
         app.text_filter = "no-such-card-anywhere"
         app.rebuild_cards()
@@ -916,15 +1146,42 @@ async def _check(app, expected=None):
         app.rebuild_cards()
         await pilot.pause(0.2)
         assert table.row_count == before, "clearing the filter did not restore the cards"
-        from textual.widgets import TabbedContent
 
-        tabs = app.query_one(TabbedContent)
         await pilot.press("2")
         await pilot.pause(0.3)
-        assert tabs.active == "tab-activity", f"pressing 2 left {tabs.active} active"
-        await pilot.press("1")
+        assert tabs.active == "tab-groups", f"pressing 2 left {tabs.active} active"
+        groups = app.query_one("#groups", DataTable)
+        if groups.row_count:
+            await pilot.press("down")
+            await pilot.pause(0.2)
+            chosen = app.selected_group
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert tabs.active == "tab-board", f"enter left {tabs.active} active"
+            assert app.group_filter == chosen, (app.group_filter, chosen)
+            assert table.row_count >= 1, "the group filter hid everything"
+            await pilot.press("escape")
+            await pilot.pause(0.3)
+            assert app.group_filter is None, "escape did not clear the group filter"
+
+        for key, expected_tab in (
+            ("d", "tab-groups"),
+            ("d", "tab-activity"),
+            ("d", "tab-board"),
+            ("a", "tab-activity"),
+            ("a", "tab-groups"),
+            ("a", "tab-board"),
+        ):
+            await pilot.press(key)
+            await pilot.pause(0.25)
+            assert tabs.active == expected_tab, f"{key} left {tabs.active}, expected {expected_tab}"
+
+        await pilot.press("h")
         await pilot.pause(0.3)
-        assert tabs.active == "tab-board", f"pressing 1 left {tabs.active} active"
+        assert isinstance(app.screen, HelpScreen), f"h opened {type(app.screen).__name__}"
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, HelpScreen), "escape did not close help"
 
 
 def run_selftest(url=None):

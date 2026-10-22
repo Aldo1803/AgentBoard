@@ -7,7 +7,7 @@ A local-first board that hands units of work (**cards**) to coding agents and re
 Three pieces, one repo:
 
 - **`agentboard.py`** — the daemon. One stdlib-only Python file: SQLite state, a plain-text/JSON HTTP API for agents, a read-only web board, an SSE live feed, and git-fact checks before review and done.
-- **`agentboard-tui.py`** — the console. A Textual client of the daemon for people who live in terminals: live board, filter, detail, per-agent activity, and confirmed actions.
+- **`agentboard-tui.py`** — the console. A Textual client of the daemon for people who live in terminals: live board, groups, filter, detail, per-agent activity, and confirmed actions.
 - **`docs/`** — the manual.
 
 ```
